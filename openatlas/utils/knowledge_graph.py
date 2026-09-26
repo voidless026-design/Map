@@ -27,6 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openatlas.config import Config
 from openatlas.core.database import db_funcs
+from openatlas.runtime import profiles
 
 CLUSTERS = ["DISCOVERY", "VERIFICATION", "REASONING", "SYNTHESIS"]
 
@@ -204,7 +205,7 @@ def build_graph(session_id: Optional[str] = None) -> Dict[str, Any]:
             "created_at": session.get("created_at"),
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "ollama_host": Config.llm.host,
-            "model": Config.llm.text_model,
+            "model": profiles.active().text_model,
         },
         "clusters": CLUSTERS,
         "nodes": nodes,

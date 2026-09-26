@@ -8,11 +8,21 @@ gracefully with a clear message when a dependency/binary is missing.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Optional
 
 from openatlas.core.registry import BaseTool, ToolRegistry, ToolResult, ToolSpec
 from openatlas.logger import get_logger
+from openatlas.runtime import limits, profiles
 
 log = get_logger("openatlas.tools.deepscan")
+
+
+def _ml_blocked(need_gb: float = 2.5) -> Optional[str]:
+    """Reason heavy face ML may not run right now, or None if it may."""
+    if not profiles.active().ml_enabled:
+        return f"heavy ML is disabled in the '{profiles.active().name}' profile"
+    ok, why = limits.memory_ok(need_gb)
+    return None if ok else why
 
 
 @ToolRegistry.register("dl-image-scans")
@@ -64,10 +74,16 @@ class DeepScanEngine(BaseTool):
         for p in (image_path_1, image_path_2):
             if not Path(p).exists():
                 return ToolResult.failure("verify_similar_faces", f"file not found: {p}")
+        blocked = _ml_blocked()
+        if blocked:
+            return ToolResult.unavailable("verify_similar_faces", blocked)
         try:
             from deepface import DeepFace  # type: ignore
 
-            res = DeepFace.verify(image_path_1, image_path_2, enforce_detection=False)
+            with limits.LLM_GATE:  # one heavy model job at a time
+                res = DeepFace.verify(limits.downscale_image(image_path_1),
+                                      limits.downscale_image(image_path_2),
+                                      enforce_detection=False)
         except Exception as exc:
             return ToolResult.unavailable(
                 "verify_similar_faces",
@@ -83,11 +99,16 @@ class DeepScanEngine(BaseTool):
     def face_attribute_analysis(image_path: str) -> ToolResult:
         if not Path(image_path).exists():
             return ToolResult.failure("face_attribute_analysis", f"file not found: {image_path}")
+        blocked = _ml_blocked()
+        if blocked:
+            return ToolResult.unavailable("face_attribute_analysis", blocked)
         try:
             from deepface import DeepFace  # type: ignore
 
-            res = DeepFace.analyze(image_path, actions=["age", "gender", "emotion"],
-                                   enforce_detection=False)
+            with limits.LLM_GATE:  # one heavy model job at a time
+                res = DeepFace.analyze(limits.downscale_image(image_path),
+                                       actions=["age", "gender", "emotion"],
+                                       enforce_detection=False)
         except Exception as exc:
             return ToolResult.unavailable(
                 "face_attribute_analysis",

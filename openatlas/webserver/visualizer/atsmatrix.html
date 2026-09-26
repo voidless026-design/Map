@@ -531,6 +531,13 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
 
     const nodes = [], edges = [], photons = [], radarPings = [];
 
+    // OpenAtlas: keep the page light. Nothing animates while the tab is hidden, motion is
+    // reduced when the OS asks for it, and drawing is capped at ~30 fps.
+    const REDUCED_MOTION = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const FRAME_MS = 33;
+    let lastFrame = 0;
+    const idle = () => document.hidden || REDUCED_MOTION;
+
     // OpenAtlas knowledge graph, if injected (see knowledge_graph.js / window.ATLAS_GRAPH).
     const ATLAS = (typeof window !== 'undefined' && window.ATLAS_GRAPH) ? window.ATLAS_GRAPH : null;
     const DATA_MODE = !!(ATLAS && Array.isArray(ATLAS.nodes) && ATLAS.nodes.length);
@@ -553,7 +560,7 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
       const byId = {};
       // A light ambient swarm per cluster so the canvas still feels alive.
       CLUSTERS.forEach(c => {
-        for (let i = 0; i < 22; i++) {
+        for (let i = 0; i < 8; i++) {
           const p = placeInCluster(c, 120);
           nodes.push({
             id: `ambient_${nodes.length}`, cluster: c.id, color: c.color,
@@ -741,6 +748,7 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
       const realEvents = window.__ATLAS_EVENTS || [];
       let evIdx = 0;
       setInterval(() => {
+        if (document.hidden) return;
         if (realEvents.length) {
           const ev = realEvents[evIdx % realEvents.length];
           pushLiveEvent(ev.tag, ev.msg, ev.phase);
@@ -749,9 +757,10 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
         for (let k = 0; k < 3 * speedMultiplier; k++) spawnPhoton();
       }, 900);
       // Photon ambience between events.
-      setInterval(() => { for (let k = 0; k < 2 * speedMultiplier; k++) spawnPhoton(); }, 160);
+      setInterval(() => { if (idle()) return; for (let k = 0; k < 2 * speedMultiplier; k++) spawnPhoton(); }, 160);
     } else {
       setInterval(() => {
+        if (idle()) return;
         pushLiveEvent();
         for (let k = 0; k < 6 * speedMultiplier; k++) spawnPhoton();
       }, 160);
@@ -786,7 +795,9 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
     window.addEventListener('mouseup', () => { isDragging = false; dragCluster = null; });
 
     let frameCount = 0;
-    function renderLoop() {
+    function renderLoop(ts) {
+      if (document.hidden || (ts && ts - lastFrame < FRAME_MS)) { requestAnimationFrame(renderLoop); return; }
+      lastFrame = ts || 0;
       ctx.clearRect(0, 0, width, height);
       frameCount++;
 

@@ -164,7 +164,12 @@ def _dry_run(fn: Any, args: Dict[str, Any]) -> Any:
     def _fake_get(*a: Any, **k: Any) -> _Resp:
         return _Resp()
 
+    import httpx
+
     patches = [
+        # v2 async client: every request gets a 404 (no network in a dry run).
+        mock.patch("openatlas.net.client.TRANSPORT",
+                   new=httpx.MockTransport(lambda req: httpx.Response(404, content=b""))),
         mock.patch("openatlas.utils.http.api_get", side_effect=_fake_get),
         mock.patch("openatlas.utils.http.api_get_json", return_value=None),
         mock.patch("openatlas.utils.http.scrape_get", return_value=None),

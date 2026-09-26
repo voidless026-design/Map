@@ -64,6 +64,10 @@ class Files(ConfigBase):
     methods_yaml = _PKG_ROOT / "methods" / "methods.yaml"
     whatsmyname = _PROJECT_ROOT / "data" / "wmn-data.json"
     secret_rules = _PKG_ROOT / "tools" / "secret_rules.yaml"
+    taxonomy = _PROJECT_ROOT / "data" / "taxonomy" / "fields_of_study.md"
+    # Where the ever-growing knowledge base ("brain") lives. Point this at an external
+    # HDD, e.g. OPENATLAS_DATA_DIR=/run/media/$USER/MyDrive/openatlas
+    brain_dir = Path(os.getenv("OPENATLAS_DATA_DIR", str(_PROJECT_ROOT / "data"))) / "brain"
 
 
 # --------------------------------------------------------------------------- #
@@ -87,17 +91,19 @@ class Database(ConfigBase):
 
 
 # --------------------------------------------------------------------------- #
-# LLM / reasoning - Ollama only, OpenAI-compatible endpoint
+# LLM / reasoning - local Ollama only (native API). Models come from the active
+# resource profile (openatlas/runtime/profiles.py); env vars override them.
 # --------------------------------------------------------------------------- #
+def _ollama_host() -> str:
+    host = os.getenv("OLLAMA_HOST", "http://localhost:11434").strip()
+    if "://" not in host:  # Ollama itself accepts "127.0.0.1:11434"
+        host = "http://" + host
+    return host.replace("://0.0.0.0", "://127.0.0.1").rstrip("/")
+
+
 class LLM(ConfigBase):
-    # e.g. http://localhost:11434 ; the OpenAI-compatible path is /v1
-    host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
-    base_url = host.rstrip("/") + "/v1"
-    # A dummy key satisfies the OpenAI client; Ollama ignores it.
-    api_key = os.getenv("OLLAMA_API_KEY", "ollama")
-    text_model = os.getenv("OPENATLAS_LLM_MODEL", "llama3.1:8b")
-    vision_model = os.getenv("OPENATLAS_VISION_MODEL", "llava:7b")
-    request_timeout = int(os.getenv("OPENATLAS_LLM_TIMEOUT", "60"))
+    host = _ollama_host()
+    request_timeout = int(os.getenv("OPENATLAS_LLM_TIMEOUT", "120"))
     temperature = float(os.getenv("OPENATLAS_LLM_TEMPERATURE", "0.2"))
 
 

@@ -16,6 +16,7 @@ from typing import Any, Dict
 
 from openatlas.core.registry import BaseTool, ToolRegistry, ToolResult, ToolSpec
 from openatlas.logger import get_logger
+from openatlas.runtime import limits, profiles
 from openatlas.tools.image_analysis import StaticImageExtractionEngine
 
 log = get_logger("openatlas.tools.vai")
@@ -28,11 +29,22 @@ _AI_HINTS = ["stable diffusion", "midjourney", "dall-e", "dalle", "firefly", "ge
 
 
 def _local_classifier(image_path: str) -> Dict[str, Any]:
+    """Classify with a local HF model. The model is loaded ONCE and reused
+    (it used to be re-loaded on every call, which exhausted RAM)."""
+    if not profiles.active().ml_enabled:
+        return {"available": False,
+                "reason": f"heavy ML is disabled in the '{profiles.active().name}' profile"}
+    ok, why = limits.memory_ok(1.2)
+    if not ok and not limits.cached_model_keys():
+        return {"available": False, "reason": why}
     try:
         from transformers import pipeline  # type: ignore
 
-        clf = pipeline("image-classification", model=_DEFAULT_MODEL)
-        preds = clf(image_path)
+        clf = limits.cached_model(
+            f"hf:{_DEFAULT_MODEL}",
+            lambda: pipeline("image-classification", model=_DEFAULT_MODEL, device=-1),
+        )
+        preds = clf(limits.downscale_image(image_path, 512))
         return {"available": True, "model": _DEFAULT_MODEL, "predictions": preds}
     except Exception as exc:
         return {"available": False, "reason": f"local model unavailable ({exc}); "

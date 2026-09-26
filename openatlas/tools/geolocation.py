@@ -141,11 +141,18 @@ class ImageGeolocationEngine(BaseTool):
     def geolocate_using_LLMs(image_path: str, prompt: str = "") -> ToolResult:
         if not Path(image_path).exists():
             return ToolResult.failure("geolocate_using_LLMs", f"file not found: {image_path}")
+        vmodel = ollama_client.vision_model()
+        if not vmodel:
+            return ToolResult.unavailable(
+                "geolocate_using_LLMs",
+                "vision is disabled in the current resource profile "
+                "(set OPENATLAS_PROFILE=standard or gpu to enable it)",
+            )
         if not ollama_client.available():
             return ToolResult.unavailable(
                 "geolocate_using_LLMs",
-                f"Ollama vision backend unreachable at {Config.llm.host}. Run `ollama serve` and "
-                f"pull a vision model (e.g. `ollama pull llava`).",
+                f"Ollama unreachable at {Config.llm.host}. Run `ollama serve` and "
+                f"`ollama pull {vmodel}`.",
             )
         q = ("You are a geolocation analyst. From visual cues (signage, architecture, vegetation, "
              "license plates, language) infer the most likely country, region and city. Give your "
