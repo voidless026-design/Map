@@ -1,0 +1,37 @@
+OpenAtlas
+Copyright (c) 2026 voidless026-design
+Licensed under the MIT License (see LICENSE).
+
+This product is a free / open-source / local reimplementation inspired by, and
+building on ideas from, the following projects. OpenAtlas is an independent work and
+is not affiliated with or endorsed by any of them.
+
+--------------------------------------------------------------------------------
+OAtlas / open-atlas  (github.com/FauvidoTechnologies/open-atlas)  - MIT
+  The overall AA-mode workflow, engine/function catalogue naming (methods.yaml),
+  and CLI shape are modelled on OAtlas. All paid/key-required backends have been
+  replaced with free, keyless, or local substitutes; no upstream code is vendored.
+
+PyBrowserAutomation (PyBA)  (github.com/FauvidoTechnologies/PyBrowserAutomation)  - see upstream
+  The browser-automation API surface (Engine.sync_run / generate_code, DFS/BFS idea)
+  informed openatlas/browser/engine.py, which is an independent reimplementation whose
+  reasoning uses local Ollama rather than any paid LLM.
+
+OpenJarvis  (github.com/open-jarvis/OpenJarvis)  - Apache License 2.0
+  The ToolRegistry / BaseTool / ToolSpec / ToolResult registration pattern and the
+  agentskills.io SKILL.md frontmatter rules (name <=64 lowercase-hyphen, description
+  <=1024 chars) are clean-room reimplementations of concepts from OpenJarvis.
+
+ATLAS (Adaptive Test-time Learning and Autonomous Specialization)
+  (github.com/itigges22/ATLAS)  - AGPL-3.0
+  The "put intelligence in the system around the model" design of the local
+  plan -> execute -> check -> repair loop informed openatlas/reasoning/loop.py.
+  This is a clean-room design; no AGPL-licensed code is copied into this MIT project.
+
+WhatsMyName  (github.com/WebBreacher/WhatsMyName)
+  data/wmn-data.json is the WhatsMyName dataset by Micah Hoffman et al., used for
+  username enumeration. See the "license" field inside that file for its terms.
+
+Holehe  (github.com/megadose/holehe)  - optional dependency
+  Used, when installed, for keyless email/account-existence corroboration.
+--------------------------------------------------------------------------------
