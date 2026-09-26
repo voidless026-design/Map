@@ -1,0 +1,316 @@
+# OpenAtlas function catalogue (OAtlas methods.yaml parity).
+# Each engine declares a common/abbrev name, a description, and per-function
+# argument schemas (type / required / description). The schema is validated by
+# openatlas.utils.schema_validate against the live registry.
+
+EmailCheckEngine:
+  common_name: email-verification
+  abbrev: ecE
+  description: Validate email addresses using syntax + DNS/MX checks (keyless).
+  functions:
+    verify_email_address:
+      description: Verify if an email address is syntactically valid and its domain accepts mail.
+      arguments:
+        email: {type: string, required: true, description: The email address to verify}
+
+StaticImageExtractionEngine:
+  common_name: image-metadata
+  abbrev: siE
+  description: Metadata + binary/firmware analysis on images and files (local).
+  functions:
+    extract_metadata:
+      description: Extract EXIF/basic metadata (and C2PA provenance if present) from an image.
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image file}
+    scan_firmware:
+      description: Scan a file/image for embedded firmware signatures (binwalk-style).
+      arguments:
+        image_path: {type: string, required: true, description: Path to the input file}
+    extract_firmware:
+      description: Extract a byte range from a binary/image by offset.
+      arguments:
+        input_path: {type: string, required: true, description: Path to the binary/image}
+        skip: {type: integer, required: false, description: Blocks to skip before reading}
+        count: {type: integer, required: false, description: Blocks to read}
+        output_file_name: {type: string, required: false, description: Output file name}
+        block_size: {type: integer, required: false, description: Block size in bytes (default 1)}
+    extract_strings:
+      description: Extract readable ASCII/UTF-16LE strings from a binary or image file.
+      arguments:
+        input_path: {type: string, required: true, description: Path to the binary/image}
+        min_length: {type: integer, required: false, description: Minimum string length (default 4)}
+
+RedditKnownEngine:
+  common_name: reddit-known-username
+  abbrev: rkE
+  description: Query public Reddit JSON endpoints for a known username.
+  functions:
+    fetch_comments:
+      description: Fetch a Reddit user's recent public comments.
+      arguments:
+        username: {type: string, required: true, description: Reddit username}
+        limit: {type: integer, required: false, description: Max comments (default 100)}
+    fetch_about:
+      description: Fetch public account details for a Reddit user.
+      arguments:
+        username: {type: string, required: true, description: Reddit username}
+    fetch_user_posts:
+      description: Fetch a Reddit user's recent public submissions.
+      arguments:
+        username: {type: string, required: true, description: Reddit username}
+
+RedditUnknownEngine:
+  common_name: reddit-unknown-username
+  abbrev: ruE
+  description: Search public Reddit without a known username.
+  functions:
+    search_reddit_posts:
+      description: Search public Reddit posts matching a query, optionally within a subreddit.
+      arguments:
+        query: {type: string, required: true, description: Keywords to search for}
+        subreddit: {type: string, required: false, description: Restrict to this subreddit}
+        t: {type: string, required: false, description: Time filter day/week/month/year/all}
+        limit: {type: integer, required: false, description: Max results (default 25)}
+        sort: {type: string, required: false, description: relevance/new/top/hot}
+        restrict_sr: {type: boolean, required: false, description: Restrict to the subreddit}
+    fetch_post_details:
+      description: Fetch details of a specific public Reddit post.
+      arguments:
+        subreddit: {type: string, required: true, description: Subreddit name}
+        post_id: {type: string, required: true, description: Reddit post ID}
+
+DeepScanEngine:
+  common_name: dl-image-scans
+  abbrev: dsE
+  description: Local deep-learning image scans (OCR, face similarity/attributes).
+  functions:
+    OCR_analysis:
+      description: Extract text from an image using local OCR (pytesseract).
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image}
+    verify_similar_faces:
+      description: Verify whether two local images contain the same person (DeepFace, ml extra).
+      arguments:
+        image_path_1: {type: string, required: true, description: First image path}
+        image_path_2: {type: string, required: true, description: Second image path}
+    face_attribute_analysis:
+      description: Estimate age/gender/emotion attributes from a local face image (ml extra).
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image}
+
+InstagramEngine:
+  common_name: instagram-query
+  abbrev: insE
+  description: Public Instagram profile info via unauthenticated HTML parsing.
+  functions:
+    fetch_account_information:
+      description: Fetch basic public profile info for an Instagram username (no login).
+      arguments:
+        username: {type: string, required: true, description: Instagram username}
+    fetch_public_account_posts:
+      description: Best-effort public post metadata via browser automation (public only).
+      arguments:
+        username: {type: string, required: true, description: Instagram username}
+
+ImageGeolocationEngine:
+  common_name: image-geolocation
+  abbrev: igE
+  description: Geolocate images using EXIF GPS, local vision LLM, and OSM reverse-geocode.
+  functions:
+    geolocate_local_image:
+      description: Geolocate a local image from EXIF GPS + reverse geocoding.
+      arguments:
+        image_path: {type: string, required: true, description: Path to the local image}
+        top_k: {type: integer, required: false, description: Number of candidates to return}
+    geolocate_online_image:
+      description: Download a public image URL (robots-gated) and geolocate it from EXIF.
+      arguments:
+        image_url: {type: string, required: true, description: URL of the image}
+        top_k: {type: integer, required: false, description: Number of candidates to return}
+    geolocate_using_LLMs:
+      description: Infer likely location by reasoning over the image with a local vision LLM.
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image}
+        prompt: {type: string, required: false, description: Optional guiding context}
+    combined_llm_deeplearning_analysis:
+      description: Merge EXIF/geocode results with local vision-LLM inference.
+      arguments:
+        image_path: {type: string, required: true, description: Path to the local image}
+        top_k: {type: integer, required: false, description: Number of candidates to return}
+
+IPinfoEngine:
+  common_name: ip-lookups
+  abbrev: ipE
+  description: IP and ASN lookups via keyless public APIs.
+  functions:
+    basic_ip_lookup:
+      description: Free-tier geolocation/ownership lookup for an IP (ip-api.com).
+      arguments:
+        ipaddress: {type: string, required: true, description: The IP address to look up}
+    core_api_lookups:
+      description: Enriched IP lookup aggregating multiple keyless sources.
+      arguments:
+        ipaddress: {type: string, required: true, description: The IP address to look up}
+    core_api_lookups_asn:
+      description: Look up an Autonomous System (ASN) via RIPEstat (keyless).
+      arguments:
+        asn_number: {type: string, required: true, description: The ASN number (digits only)}
+
+PerplexityEngine:
+  common_name: web-search
+  abbrev: pplxE
+  description: Keyless web/image search via DuckDuckGo, optionally summarised by Ollama.
+  functions:
+    search_perplexity_text:
+      description: Search the web (DuckDuckGo) and optionally summarise with a local LLM.
+      arguments:
+        search_request: {type: string, required: true, description: The query string}
+    search_perplexity_images:
+      description: Search for images via DuckDuckGo and return result URLs.
+      arguments:
+        search_request: {type: string, required: true, description: The image query string}
+
+UsernameCheckEngine:
+  common_name: username-enumeration
+  abbrev: ucE
+  description: Check a username across many sites using the OSS WhatsMyName dataset.
+  functions:
+    check_usernames:
+      description: Test a username across public sites and return the matches.
+      arguments:
+        username: {type: string, required: true, description: The username to check}
+
+GitHubEngine:
+  common_name: github-search
+  abbrev: ghE
+  description: Public GitHub profile/repo info + gitleaks-style secret scanning.
+  functions:
+    fetch_about:
+      description: Fetch a public GitHub user's profile details.
+      arguments:
+        username: {type: string, required: true, description: GitHub username}
+    fetch_repos:
+      description: Fetch a public GitHub user's repositories and metadata.
+      arguments:
+        username: {type: string, required: true, description: GitHub username}
+    get_repo_secrets:
+      description: Scan PUBLIC GitHub repositories for accidentally committed secrets.
+      arguments:
+        repository_names: {type: array, required: true, description: Public repo URLs to scan}
+
+NettackerEngine:
+  common_name: nettacker-scan
+  abbrev: ntE
+  description: Authorization-gated TCP port/service scanning of hosts you own/are authorized to test.
+  functions:
+    nettacker_run:
+      description: Scan authorized targets for open TCP ports/services. Requires --authorized-target.
+      arguments:
+        targets: {type: array, required: true, description: Hosts/IPs you are authorized to scan}
+        ports: {type: array, required: false, description: "Ports/ranges e.g. 1-1024 or 8080"}
+
+HaveIBeenPwnedEngine:
+  common_name: have-i-been-pwned
+  abbrev: HIBP
+  description: Keyless breach checks (HIBP Pwned Passwords range API + XposedOrNot).
+  functions:
+    check_email_against_breach_data:
+      description: Check whether an email appears in known public breach datasets (keyless).
+      arguments:
+        email: {type: string, required: true, description: The email to check}
+
+ProfessionalEmailFinderEngine:
+  common_name: professional-email-finder
+  abbrev: PEF
+  description: Discover likely emails via permutations + MX + Holehe (no Hunter.io key).
+  functions:
+    find_emails_for_domain:
+      description: Enumerate likely professional email patterns for a domain (heuristic + MX).
+      arguments:
+        domain_name: {type: string, required: true, description: Company domain (e.g. stripe.com)}
+    find_emails_for_person:
+      description: Derive and verify the most likely email for a person at a domain.
+      arguments:
+        domain_name: {type: string, required: true, description: Company domain}
+        first_name: {type: string, required: true, description: Person's first name}
+        last_name: {type: string, required: true, description: Person's last name}
+
+GetPagesEngine:
+  common_name: get-pages
+  abbrev: GPE
+  description: Robots-gated HTTP GET of one or many public URLs.
+  functions:
+    fetch_get_page:
+      description: Fetch a single public URL (robots-gated) and return status + text.
+      arguments:
+        url: {type: string, required: true, description: The full URL to request}
+    fetch_get_pages_bulk:
+      description: Fetch multiple public URLs (robots-gated), comma-separated.
+      arguments:
+        urls: {type: string, required: true, description: Comma-separated list of URLs}
+
+HyperlinkExtractEngine:
+  common_name: hyperlink-extract
+  abbrev: HLE
+  description: Extract hyperlinks (incl. mailto/social) from public web pages.
+  functions:
+    hyperlinks_for_single_url:
+      description: Extract all hyperlinks from a single public page (robots-gated).
+      arguments:
+        url: {type: string, required: true, description: The page URL}
+    hyperlinks_for_multiple_urls:
+      description: Extract hyperlinks from several public pages (robots-gated).
+      arguments:
+        urls: {type: array, required: true, description: List of page URLs}
+
+VerifyAIGeneratedImageEngine:
+  common_name: verify-ai-generated-image
+  abbrev: VAI
+  description: Detect AI-generated/edited images via C2PA/EXIF + local models (no isgen key).
+  functions:
+    metadata_analysis:
+      description: Inspect an image's metadata/C2PA for AI-generation or tampering signals.
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image}
+    deepscan_fake_image_verification:
+      description: Run a local Hugging Face deepfake/AI-image classifier (ml extra).
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image}
+    isgenAI:
+      description: Local replacement for isgen.ai - runs the local classifier (no external key).
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image}
+    combined_AI_image_verification:
+      description: Aggregate metadata analysis + local model detection into one verdict.
+      arguments:
+        image_path: {type: string, required: true, description: Path to the image}
+
+OathNetEngine:
+  common_name: oathnet-search
+  abbrev: OATH
+  description: Breach lookups via keyless XposedOrNot. Stealer-log retrieval is disabled by policy.
+  functions:
+    get_breached_data:
+      description: Query public breach datasets for an email/query via XposedOrNot (keyless).
+      arguments:
+        query: {type: string, required: true, description: Email or query string}
+    get_stealer_logs:
+      description: DISABLED by policy - returns an explanatory refusal (no legitimate free source).
+      arguments:
+        query: {type: string, required: true, description: Ignored; call is refused}
+    combined_oathnet_search:
+      description: Run the breach lookup only (stealer-log path is disabled).
+      arguments:
+        query: {type: string, required: true, description: Email or query string}
+
+BrowserAutomationEngine:
+  common_name: browser-automation
+  abbrev: BAE
+  description: LLM-driven Playwright automation of PUBLIC pages (no CAPTCHA/paywall bypass).
+  functions:
+    run_automated_browser_instance:
+      description: Drive a headless browser to perform a task on public pages, reasoning via Ollama.
+      arguments:
+        prompt: {type: string, required: true, description: The task/instruction to perform}
+
+

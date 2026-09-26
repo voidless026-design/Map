@@ -1,0 +1,18 @@
+[package]
+name = "binwalk_bindings"
+version = "0.1.0"
+edition = "2021"
+description = "Optional Rust-accelerated binary signature scanning for OpenAtlas (binwalk-style)."
+license = "MIT"
+
+[lib]
+name = "binwalk_bindings"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module"] }
+
+# Note: to also leverage the real `binwalk` Rust crate for richer carving, add:
+#   binwalk = "3"
+# and extend scan() in src/lib.rs to call it. It is intentionally left out of the
+# default build so `make maturin-develop` works without extra system libraries.

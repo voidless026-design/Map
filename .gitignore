@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Env / secrets (never commit real config)
+.env
+.env.private
+
+# Databases & runtime output
+data/openatlas.db
+output/
+data/robots_cache/*
+!data/robots_cache/.gitkeep
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+poetry.lock
+
+# Rust build artifacts
+rust_ext/target/
+*.so
