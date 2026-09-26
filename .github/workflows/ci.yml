@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install core dependencies
+        # Installs the package's main runtime deps via the pyproject build backend.
+        # Optional groups (search/email/image/browser/ml/web) are intentionally not
+        # installed: engines import them lazily and the tests mock all I/O, so the
+        # core install is enough to run the full suite hermetically.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pytest ruff
+
+      - name: Lint (ruff)
+        run: ruff check openatlas
+
+      - name: Secret / paid-key lint
+        # Enforces the "no paid keys, no hardcoded secrets" project rule.
+        run: python -m openatlas.utils.secret_lint openatlas
+
+      - name: Unit tests (offline, network + LLM mocked)
+        run: python -m pytest -q
+
+      - name: Self-verifier (all functions)
+        # import/registration + methods.yaml schema-lint + mocked dry-run +
+        # public-only/robots + no-secrets guard for every registered function.
+        run: python openatlas.py --verify

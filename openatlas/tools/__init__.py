@@ -8,9 +8,11 @@ web-scraping call is robots-gated via openatlas.utils.http.scrape_get.
 from __future__ import annotations
 
 # Order doesn't matter; importing each module runs its @register decorator.
+# DeepScan lives with image_analysis's neighbours but ships its own module.
 from openatlas.tools import (  # noqa: F401
     ai_image_detector,
     browser_automation,
+    deep_scan,  # noqa: F401,E402
     email_checker,
     geolocation,
     get_pages,
@@ -27,6 +29,3 @@ from openatlas.tools import (  # noqa: F401
     reverse_instagram_lookup,
     username_search,
 )
-
-# DeepScan lives with image_analysis's neighbours but ships its own module.
-from openatlas.tools import deep_scan  # noqa: F401,E402

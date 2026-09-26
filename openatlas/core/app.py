@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List, Optional, Type
 
-from openatlas.config import Config
 from openatlas.core.database import db_funcs
 from openatlas.core.registry import BaseTool, ToolRegistry, ToolResult, ToolSpec, load_all_engines
 from openatlas.llm import ollama_client

@@ -18,8 +18,7 @@ Ollama, or a GPU - degraded results still count as well-formed.
 from __future__ import annotations
 
 import inspect
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 from unittest import mock
 
 from openatlas.core.registry import ToolRegistry, ToolResult, ToolSpec, load_all_engines

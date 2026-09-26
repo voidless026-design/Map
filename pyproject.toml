@@ -69,6 +69,17 @@ build-backend = "poetry.core.masonry.api"
 [tool.ruff]
 line-length = 99
 
+[tool.ruff.lint]
+# A focused, deterministic ruleset: pycodestyle errors/warnings, pyflakes, and
+# import sorting. We deliberately do NOT enable opinionated rules that fight this
+# project's design (e.g. broad `except Exception` is intentional for graceful
+# degradation when a free/local backend is unavailable).
+select = ["E", "F", "W", "I"]
+ignore = [
+    "E501",  # line length is enforced by the formatter, not the linter
+    "E741",  # short names like l/i are used for local coordinates/loops
+]
+
 [tool.ruff.format]
 quote-style = "double"
 
