@@ -66,10 +66,47 @@ python3 openatlas.py -f check_usernames fetch_about   # chain multiple functions
 python3 openatlas.py --snapshot-txt example.com  # download robots.txt/security.txt/...
 python3 openatlas.py --verify                    # self-verify all 44 functions
 python3 openatlas.py --start-web-server          # optional Streamlit UI
+python3 openatlas.py --visualize                 # knowledge graph of the latest session
 ```
 
 Every run is logged to a database (SQLite by default; MySQL/PostgreSQL optional) so you
 can rebuild reports and track investigation history.
+
+## Visualize the knowledge base 🧠
+
+Every investigation session can be rendered as an interactive knowledge graph using a
+fork of the [ATSMATRIX Agent VisualizeR](https://github.com/anyel1to/atsmatrix-agent-visualizeR--ANYEL1TO)
+(MIT), bundled in `openatlas/webserver/visualizer/`.
+
+```bash
+python3 openatlas.py --visualize                 # latest session -> http://127.0.0.1:8765
+python3 openatlas.py --visualize <SESSION_ID>    # a specific session
+python3 openatlas.py --visualize --viz-port 9000 # another port
+python3 openatlas.py --visualize --viz-no-serve  # just write output/visualizer/ (static files)
+make viz                                         # same as --visualize
+```
+
+What you see:
+
+| Cluster | OpenAtlas meaning |
+|---|---|
+| **DISCOVERY** | the target + collection engines (Reddit, GitHub, username, email, IP, pages…) |
+| **REASONING** | LLM / vision / search / browser engines |
+| **VERIFICATION** | breach and AI-image checks |
+| **SYNTHESIS** | the aggregated report node |
+
+- Each **function run** is a hub node; its **findings** fan out around it. Amber = degraded
+  (backend unavailable), red = failed.
+- **Cross-links** connect runs that surfaced the same value (e.g. one email found by two
+  engines) — independent corroboration at a glance.
+- The HUD replays the real pipeline (COLLECT → MATCH → CROSS-LINK → VERIFY → SYNTH).
+- **Ask local AI** chats with your *local* Ollama about the graph — no API key, no cloud.
+  If Ollama isn't running it shows an honest summary of the graph instead. If your browser
+  blocks the call, start Ollama with `OLLAMA_ORIGINS=http://127.0.0.1:8765 ollama serve`.
+
+The Streamlit UI (`--start-web-server`) also has a **Knowledge graph** panel; the embedded
+chat there usually falls back to the summary, so use `--visualize` for the local-AI chat.
+Everything is served from `127.0.0.1` only.
 
 ## Engines (AA mode)
 
@@ -109,6 +146,8 @@ Input → pick function(s) → engine executes (free/local backend) → ToolResu
 - `openatlas/utils/robots.py` — the robots.txt guard every scraper routes through.
 - `openatlas/reasoning/loop.py` — ATLAS-inspired plan→execute→check→repair (AA mode).
 - `openatlas/browser/engine.py` — PyBA-style Playwright automation, reasoning via Ollama.
+- `openatlas/utils/knowledge_graph.py` + `openatlas/webserver/visualizer/` — session →
+  knowledge-graph exporter and the forked ATSMATRIX visualizer.
 
 ## Testing
 
@@ -121,7 +160,8 @@ make lint     # ruff + secret/paid-key lint
 ## Credits & licences
 
 Independent work inspired by OAtlas, PyBA, OpenJarvis (Apache-2.0) and ATLAS (AGPL-3.0);
-uses the WhatsMyName dataset and optionally Holehe. See [NOTICE](NOTICE). MIT licensed.
+bundles a modified fork of the ATSMATRIX visualizer (MIT); uses the WhatsMyName dataset and
+optionally Holehe. See [NOTICE](NOTICE). MIT licensed.
 
 > **Sandbox note:** in a restricted cloud container the outbound proxy may block most
 > external hosts, so live lookups won't run there — run OpenAtlas on your own machine

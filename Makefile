@@ -1,6 +1,6 @@
 # OpenAtlas developer tasks. All targets use free/local tooling.
 
-.PHONY: help install install-all test lint verify fetch-data robots maturin-develop web clean
+.PHONY: help install install-all test lint verify fetch-data robots maturin-develop web viz clean
 
 help:
 	@echo "OpenAtlas make targets:"
@@ -13,6 +13,7 @@ help:
 	@echo "  robots DOMAIN=x  Snapshot robots.txt/security.txt/... for a domain"
 	@echo "  maturin-develop  Build the optional Rust binwalk bindings"
 	@echo "  web              Launch the Streamlit UI"
+	@echo "  viz [SESSION=id] Knowledge-graph visualizer for a session (default: latest)"
 
 install:
 	poetry install
@@ -43,6 +44,9 @@ maturin-develop:
 
 web:
 	poetry run python3 openatlas.py --start-web-server || python3 openatlas.py --start-web-server
+
+viz:
+	poetry run python3 openatlas.py --visualize $(SESSION) || python3 openatlas.py --visualize $(SESSION)
 
 clean:
 	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true

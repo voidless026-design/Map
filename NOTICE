@@ -28,6 +28,16 @@ ATLAS (Adaptive Test-time Learning and Autonomous Specialization)
   plan -> execute -> check -> repair loop informed openatlas/reasoning/loop.py.
   This is a clean-room design; no AGPL-licensed code is copied into this MIT project.
 
+ATSMATRIX Agent VisualizeR  (github.com/anyel1to/atsmatrix-agent-visualizeR--ANYEL1TO)  - MIT
+  Copyright (c) 2026 ATSMATRIX Technologies / anyel1to.
+  openatlas/webserver/visualizer/atsmatrix.html is a MODIFIED copy of the upstream
+  index.html; its licence is kept in openatlas/webserver/visualizer/LICENSE.ATSMATRIX.
+  OpenAtlas changes: loads real investigation data (window.ATLAS_GRAPH) instead of the
+  simulated demo; the Google Gemini chat (which required an API key) is replaced by a LOCAL
+  Ollama call with no key; the offline fallback shows an honest graph summary instead of
+  simulated statistics; demo "verified" badges are hidden over real data; data-node layout,
+  labels and theme-aware text were added.
+
 WhatsMyName  (github.com/WebBreacher/WhatsMyName)
   data/wmn-data.json is the WhatsMyName dataset by Micah Hoffman et al., used for
   username enumeration. See the "license" field inside that file for its terms.

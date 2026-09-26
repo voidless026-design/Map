@@ -69,3 +69,18 @@ with col2:
                                           success=result.success)
         else:
             st.json(json.loads(json.dumps(result, default=str)))
+
+st.divider()
+with st.expander("🧠 Knowledge graph (ATSMATRIX visualizer)", expanded=False):
+    import streamlit.components.v1 as components
+
+    from openatlas.utils import knowledge_graph
+
+    sid = st.text_input("Session ID (blank = latest)", value="")
+    try:
+        graph = knowledge_graph.build_graph(sid.strip() or None)
+        st.caption(f"Session {graph['meta']['session_id']} · {len(graph['nodes'])} nodes · "
+                   f"{len(graph['edges'])} edges")
+        components.html(knowledge_graph.inline_html(graph), height=820, scrolling=False)
+    except LookupError as exc:
+        st.info(f"No graph yet: {exc}")

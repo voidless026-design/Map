@@ -37,6 +37,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=Config.web.start_api_server,
         help="Start the local Streamlit web UI for interactive use",
     )
+    web_opts.add_argument(
+        "--visualize", dest="visualize", nargs="?", const="latest", default=None,
+        metavar="SESSION_ID",
+        help="Render an investigation session (default: latest) as an interactive "
+        "knowledge graph in the ATSMATRIX visualizer, served locally",
+    )
+    web_opts.add_argument(
+        "--viz-port", dest="viz_port", type=int, default=8765,
+        help="Local port for --visualize (default 8765)",
+    )
+    web_opts.add_argument(
+        "--viz-no-serve", dest="viz_no_serve", action="store_true",
+        help="With --visualize: only write the bundle to output/visualizer/, don't serve",
+    )
 
     atlas_opts = parser.add_argument_group("Atlas (AA) options")
     atlas_opts.add_argument(

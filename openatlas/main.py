@@ -59,6 +59,23 @@ def main(argv=None) -> int:
         print(json.dumps(report, indent=2))
         return 0 if ok else 1
 
+    if args.visualize is not None:
+        from openatlas.utils import knowledge_graph
+
+        sid = None if args.visualize == "latest" else args.visualize
+        try:
+            graph = knowledge_graph.build_graph(sid)
+        except LookupError as exc:
+            print(f"Cannot visualize: {exc}")
+            return 1
+        out = knowledge_graph.write_bundle(graph)
+        meta = graph["meta"]
+        print(f"Session {meta['session_id']}: {len(graph['nodes'])} nodes, "
+              f"{len(graph['edges'])} edges -> {out}")
+        if not args.viz_no_serve:
+            knowledge_graph.serve(out, port=args.viz_port)
+        return 0
+
     if args.start_web_server:
         from openatlas.webserver.app import launch
 

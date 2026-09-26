@@ -117,6 +117,30 @@ def get_runs(session_id: str) -> List[Dict[str, Any]]:
         ]
 
 
+def get_session(session_id: str) -> Optional[Dict[str, Any]]:
+    """Return a session's metadata, or None if it doesn't exist."""
+    init_db()
+    with _session() as s:
+        row = s.execute(
+            select(Session).where(Session.session_id == session_id)
+        ).scalars().first()
+        if row is None:
+            return None
+        return {
+            "session_id": row.session_id,
+            "label": row.label,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+
+
+def latest_session_id() -> Optional[str]:
+    """Return the most recently created session_id, or None if there are none."""
+    init_db()
+    with _session() as s:
+        row = s.execute(select(Session).order_by(Session.id.desc())).scalars().first()
+        return row.session_id if row else None
+
+
 def reset_for_tests(url: str = "sqlite:///:memory:") -> None:  # pragma: no cover
     """Point the layer at an in-memory DB (used by the test-suite)."""
     global _ENGINE, _SESSIONMAKER
