@@ -70,6 +70,28 @@ CREATE TABLE IF NOT EXISTS queue (
 CREATE INDEX IF NOT EXISTS queue_next ON queue(status, priority DESC, tier, id);
 CREATE INDEX IF NOT EXISTS queue_seed ON queue(seed);
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+-- Kiwix library: one row per ZIM file (downloads, verification, ingestion progress)
+CREATE TABLE IF NOT EXISTS library (
+  id INTEGER PRIMARY KEY,
+  uuid TEXT, book TEXT NOT NULL, name TEXT, flavour TEXT, version TEXT,
+  title TEXT, language TEXT, filename TEXT NOT NULL, path TEXT NOT NULL,
+  url TEXT, size INTEGER DEFAULT 0, sha256 TEXT, articles INTEGER DEFAULT 0,
+  status TEXT NOT NULL,          -- queued|downloading|paused|ready|ingesting|ingested|failed|cancelled
+  bytes_done INTEGER DEFAULT 0, speed REAL DEFAULT 0,
+  cursor INTEGER DEFAULT 0, entries INTEGER DEFAULT 0, ingested INTEGER DEFAULT 0,
+  replaces INTEGER, note TEXT, updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS library_book ON library(book);
+-- title + alias index (search engines weigh the title most; aliases = redirects, e.g. WWII)
+CREATE TABLE IF NOT EXISTS titles (
+  id INTEGER PRIMARY KEY, doc_id INTEGER NOT NULL, title TEXT NOT NULL,
+  norm TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'title'   -- title | alias
+);
+CREATE INDEX IF NOT EXISTS titles_doc ON titles(doc_id);
+CREATE INDEX IF NOT EXISTS titles_norm ON titles(norm);
+CREATE VIRTUAL TABLE IF NOT EXISTS titles_fts USING fts5(
+  title, tokenize='porter unicode61 remove_diacritics 2'
+);
 """
 
 _LOCK = threading.RLock()
@@ -119,11 +141,48 @@ def connect() -> Iterator[sqlite3.Connection]:
             con.execute("PRAGMA mmap_size=0")
             if str(path) not in _INIT:
                 con.executescript(SCHEMA)
+                _backfill_titles(con)
                 _INIT.add(str(path))
             yield con
             con.commit()
         finally:
             con.close()
+
+
+def norm_title(title: str) -> str:
+    """Case/space/punctuation-insensitive form used for exact title and alias matches."""
+    return " ".join(re.findall(r"\w+", title.lower()))
+
+
+def _index_title(con: sqlite3.Connection, doc_id: int, title: str, kind: str) -> None:
+    norm = norm_title(title)
+    if not norm or con.execute("SELECT 1 FROM titles WHERE doc_id=? AND norm=?",
+                               (doc_id, norm)).fetchone():
+        return
+    tid = con.execute("INSERT INTO titles(doc_id, title, norm, kind) VALUES (?,?,?,?)",
+                      (doc_id, title, norm, kind)).lastrowid
+    con.execute("INSERT INTO titles_fts(rowid, title) VALUES (?,?)", (tid, title))
+
+
+def _backfill_titles(con: sqlite3.Connection) -> None:
+    """Brains created before the title index get it once, on first connect."""
+    if con.execute("SELECT 1 FROM titles LIMIT 1").fetchone() or \
+            not con.execute("SELECT 1 FROM documents LIMIT 1").fetchone():
+        return
+    for r in con.execute("SELECT id, title FROM documents").fetchall():
+        _index_title(con, r["id"], r["title"], "title")
+
+
+def add_aliases(key: str, aliases: Iterable[str]) -> int:
+    """Attach alternative names (redirects) to a document. Returns how many were new."""
+    with connect() as con:
+        row = con.execute("SELECT id FROM documents WHERE key=?", (key,)).fetchone()
+        if not row:
+            return 0
+        before = con.execute("SELECT COUNT(*) FROM titles WHERE doc_id=?", (row["id"],)).fetchone()[0]
+        for a in aliases:
+            _index_title(con, row["id"], a, "alias")
+        return con.execute("SELECT COUNT(*) FROM titles WHERE doc_id=?", (row["id"],)).fetchone()[0] - before
 
 
 def reset_init_cache() -> None:  # tests switch data dirs
@@ -163,34 +222,62 @@ def chunk(text: str, size: int = 1200) -> List[str]:
     return out
 
 
+def _upsert(con: sqlite3.Connection, *, key: str, source: str, title: str, text: str,
+            url: str = "", revid: Optional[int] = None, license: str = "",
+            tags: Iterable[str] = ()) -> int:
+    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
+    row = con.execute("SELECT id, hash FROM documents WHERE key=?", (key,)).fetchone()
+    if row and row["hash"] == digest:
+        doc_id = row["id"]
+    else:
+        if row:
+            doc_id = row["id"]
+            _delete_chunks(con, doc_id)
+            con.execute("UPDATE documents SET title=?, url=?, revid=?, license=?, fetched_at=?, "
+                        "chars=?, hash=? WHERE id=?",
+                        (title, url, revid, license, now(), len(text), digest, doc_id))
+        else:
+            cur = con.execute(
+                "INSERT INTO documents(key, source, title, url, revid, license, fetched_at, chars, hash)"
+                " VALUES (?,?,?,?,?,?,?,?,?)",
+                (key, source, title, url, revid, license, now(), len(text), digest))
+            doc_id = int(cur.lastrowid)
+        _index_title(con, doc_id, title, "title")
+        for i, piece in enumerate(chunk(text)):
+            cid = con.execute("INSERT INTO chunks(doc_id, ord, text) VALUES (?,?,?)",
+                              (doc_id, i, piece)).lastrowid
+            con.execute("INSERT INTO chunks_fts(rowid, text) VALUES (?,?)", (cid, piece))
+    for tag in tags:
+        con.execute("INSERT OR IGNORE INTO doc_tags(doc_id, tag) VALUES (?,?)", (doc_id, tag))
+    return int(doc_id)
+
+
 def upsert_document(*, key: str, source: str, title: str, text: str, url: str = "",
                     revid: Optional[int] = None, license: str = "", tags: Iterable[str] = ()) -> int:
-    """Insert or replace a document and its chunks. Returns the document id."""
-    digest = hashlib.sha1(text.encode("utf-8")).hexdigest()
+    """Insert or replace a document and its chunks. Returns the document id.
+
+    The key is the identity: re-ingesting the same article (from the API or a Kiwix file)
+    updates it in place - the brain never holds two copies."""
     with connect() as con:
-        row = con.execute("SELECT id, hash FROM documents WHERE key=?", (key,)).fetchone()
-        if row and row["hash"] == digest:
-            doc_id = row["id"]
-        else:
+        return _upsert(con, key=key, source=source, title=title, text=text, url=url, revid=revid,
+                       license=license, tags=tags)
+
+
+def upsert_many(docs: Iterable[Dict[str, Any]], aliases: Optional[Dict[str, List[str]]] = None) -> int:
+    """Bulk upsert in ONE transaction (Kiwix ingestion: hundreds of articles per commit).
+
+    ``aliases`` maps a document key to extra names (redirects). Returns documents written."""
+    n = 0
+    with connect() as con:
+        for d in docs:
+            _upsert(con, **d)
+            n += 1
+        for key, names in (aliases or {}).items():
+            row = con.execute("SELECT id FROM documents WHERE key=?", (key,)).fetchone()
             if row:
-                doc_id = row["id"]
-                _delete_chunks(con, doc_id)
-                con.execute("UPDATE documents SET title=?, url=?, revid=?, license=?, fetched_at=?, "
-                            "chars=?, hash=? WHERE id=?",
-                            (title, url, revid, license, now(), len(text), digest, doc_id))
-            else:
-                cur = con.execute(
-                    "INSERT INTO documents(key, source, title, url, revid, license, fetched_at, chars, hash)"
-                    " VALUES (?,?,?,?,?,?,?,?,?)",
-                    (key, source, title, url, revid, license, now(), len(text), digest))
-                doc_id = int(cur.lastrowid)
-            for i, piece in enumerate(chunk(text)):
-                cid = con.execute("INSERT INTO chunks(doc_id, ord, text) VALUES (?,?,?)",
-                                  (doc_id, i, piece)).lastrowid
-                con.execute("INSERT INTO chunks_fts(rowid, text) VALUES (?,?)", (cid, piece))
-        for tag in tags:
-            con.execute("INSERT OR IGNORE INTO doc_tags(doc_id, tag) VALUES (?,?)", (doc_id, tag))
-        return int(doc_id)
+                for a in names:
+                    _index_title(con, row["id"], a, "alias")
+    return n
 
 
 def _delete_chunks(con: sqlite3.Connection, doc_id: int) -> None:

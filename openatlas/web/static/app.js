@@ -64,7 +64,8 @@ function show(view) {
   state.view = view;
   document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "v-" + view));
-  $("#view-title").textContent = { investigate: "Investigate", cases: "Cases", brain: "Brain", skills: "Skills", system: "System" }[view];
+  $("#view-title").textContent = { investigate: "Investigate", cases: "Cases", brain: "Brain", library: "Library", skills: "Skills", system: "System" }[view];
+  if (view === "library") loadLibrary();
   if (view === "cases") loadCases();
   if (view === "brain") loadBrain();
   if (view === "skills") loadSkills();
@@ -392,11 +393,70 @@ async function askBrain() {
     out.replaceChildren(h("div", { class: "answer" }, a.answer),
       h("div", { class: "cites" }, ...a.citations.map((c) => h("div", {}, `[${c.n}] `,
         safeUrl(c.url) ? h("a", { href: safeUrl(c.url), target: "_blank", rel: "noopener noreferrer" }, c.title) : c.title,
+        c.why ? h("span", { class: "why" }, "  matched: " + c.why) : null,
         h("span", { class: "dim" }, "  " + (c.license || ""))))),
       h("div", { class: "cites dim mono" }, a.mode === "llm" ? "answered by your local model from the passages above" : a.mode === "extractive" ? "local AI offline — showing the most relevant passages" : ""));
   } catch (e) { out.replaceChildren(h("div", { class: "answer" }, "Failed: " + e.message)); }
 }
 $("#ask-go").addEventListener("click", askBrain);
+
+// ------------------------------------------------------------------ library (Kiwix)
+const GB = (n) => n >= 1e9 ? (n / 1e9).toFixed(n >= 1e10 ? 0 : 1) + " GB" : Math.max(1, Math.round(n / 1e6)) + " MB";
+let libTimer = null;
+async function loadLibrary() {
+  clearTimeout(libTimer); libTimer = null;
+  let s; try { s = await api("/api/library"); } catch (e) { $("#lib-line").textContent = e.message; return; }
+  $("#lib-line").textContent = `${s.books.length} book${s.books.length === 1 ? "" : "s"} · ${s.free_gb} GB free · ${s.dir}`;
+  const hints = [];
+  if (!s.libzim) hints.push("To feed books into the brain: pip install libzim");
+  if (s.kiwix.hint) hints.push(s.kiwix.hint);
+  $("#lib-hint").textContent = hints.join("   ·   ");
+  $("#lib-read").hidden = !s.kiwix.installed || !s.books.length;
+  const box = $("#lib-books"); box.replaceChildren();
+  if (!s.books.length) box.append(h("div", { class: "empty" }, "No books yet. Search the catalog below — Wikipedia without pictures (“nopic”) is a good first download."));
+  for (const b of s.books) {
+    const dl = ["queued", "downloading", "paused"].includes(b.status);
+    const pct = dl ? b.percent : b.ingest_percent;
+    const label = dl ? `download ${b.percent}%` + (b.speed ? ` · ${(b.speed / 1e6).toFixed(1)} MB/s` : "")
+      : b.status === "ingested" ? "in the brain" : `brain ${b.ingest_percent}%`;
+    const ctl = (a, t) => h("button", { class: "btn ghost", onclick: async () => { await api(`/api/library/${b.id}/${a}`, { method: "POST" }); loadLibrary(); } }, t);
+    box.append(h("div", { class: "lib-row" },
+      h("div", {}, h("strong", {}, b.title || b.filename), h("div", { class: "muted mono" }, `${b.filename} · ${GB(b.size)}${b.note ? " · " + b.note : ""}`)),
+      h("span", { class: "badge " + (b.status === "failed" ? "refuted" : b.status === "ingested" ? "confirmed" : "unverified") }, b.status),
+      h("div", {}, h("div", { class: "progress" }, h("i", { style: `width:${pct}%` })), h("div", { class: "mono dim", style: "font-size:11px;margin-top:4px" }, label)),
+      h("div", { class: "row" }, b.status === "downloading" || b.status === "queued" ? ctl("pause", "Pause") : null,
+        b.status === "paused" || b.status === "failed" ? ctl("resume", "Resume") : null,
+        dl || b.status === "failed" ? ctl("cancel", "Cancel") : null)));
+  }
+  // poll only while something is moving (no timers when idle)
+  if (state.view === "library" && s.books.some((b) => ["queued", "downloading", "ingesting"].includes(b.status)))
+    libTimer = setTimeout(() => { if (!document.hidden) loadLibrary(); }, 3000);
+}
+async function searchCatalog() {
+  const out = $("#lib-catalog"); out.replaceChildren(h("div", { class: "empty" }, h("span", { class: "spin" }), " searching the Kiwix catalog…"));
+  let books;
+  try { books = await api(`/api/library/catalog?q=${encodeURIComponent($("#lib-q").value.trim())}&lang=${$("#lib-lang").value}`); }
+  catch (e) { out.replaceChildren(h("div", { class: "empty" }, e.message)); return; }
+  if (!books.length) { out.replaceChildren(h("div", { class: "empty" }, "Nothing in the catalog matches.")); return; }
+  out.replaceChildren(h("div", { class: "panel" }, ...books.map((b) => h("div", { class: "lib-row" },
+    h("div", {}, h("strong", {}, b.title), h("div", { class: "muted" }, b.summary),
+      h("div", { class: "mono dim", style: "font-size:11px;margin-top:4px" }, `${b.filename} · ${b.articles.toLocaleString()} articles`)),
+    h("span", { class: "mono" }, GB(b.size)),
+    h("span", { class: "mono dim" }, b.flavour || "—"),
+    b.status === "have" ? h("button", { class: "btn", disabled: true, title: b.reason }, "In library ✓")
+      : h("button", { class: "btn " + (b.status === "update" ? "" : "primary"), onclick: async (e) => {
+          e.target.disabled = true;
+          try { await api("/api/library/get", { method: "POST", body: JSON.stringify(b) }); toast(`Downloading ${b.filename}`); loadLibrary(); searchCatalog(); }
+          catch (err) { toast(err.message); e.target.disabled = false; } } }, b.status === "update" ? "Update ↑" : "Download")))));
+}
+$("#lib-go").addEventListener("click", searchCatalog);
+$("#lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") searchCatalog(); });
+$("#lib-read").addEventListener("click", async () => {
+  const r = await api("/api/library/0/read", { method: "POST" });
+  if (!r.url) { toast(r.hint || "Nothing to read yet"); return; }
+  $("#lib-frame").src = r.url; $("#lib-reader").classList.remove("hidden");
+  $("#lib-reader").scrollIntoView({ behavior: "smooth" });
+});
 $("#ask-q").addEventListener("keydown", (e) => { if (e.key === "Enter") askBrain(); });
 
 // ------------------------------------------------------------------ skills

@@ -34,6 +34,7 @@ refuses to call anything finished until the checks are green.
 - "I want a tool that validates phone numbers offline with `phonenumbers`." -> `new-engine`
 - "Create a skill that investigates a username end-to-end." -> `new-skill`
 - "Turn my 'curate the brain' routine into a reusable skill." -> `new-skill`
+- "Make a skill that checks Atlas's answers are on-topic." -> `new-skill` (this is how `search-quality` was made)
 - "Do all our skills and their tools still work?" -> `verify-skill --all` + `doctor`
 
 Do **not** trigger it to *run* an existing function (use `openatlas run <slug> <value>`),
@@ -77,7 +78,7 @@ python -m openatlas.utils.forge new-skill --name username-deep-dive \
   --tool "openatlas/investigate/verify.py - automatic re-checks"
 ```
 
-`osint-investigate` and `kb-curate` in this repo were generated exactly this way. If the
+`osint-investigate`, `kb-curate`, `search-quality` and `kb-library` in this repo were generated exactly this way. If the
 lint fails, fix the draft and run `python -m openatlas.utils.forge verify-skill <name>`;
 it is promoted as soon as it passes.
 
@@ -112,7 +113,14 @@ python -m pytest -q
    scaffolder does a full round-trip in a temp directory (never touching the repo), the
    evidence verifier must label confirmed / refuted / unverified correctly, and the brain
    check stores a fixture article in a throwaway brain and must find it (and nothing for a
-   nonsense query) before sampling your real brain. `doctor --live` also probes each public source once from your
+   nonsense query) before sampling your real brain. The search-relevance check runs the
+   relevance evaluator on a look-alike corpus ("Roman Empire" vs "Holy Roman Empire" vs
+   "Empire (film)") and requires the real ranker to pass **and** the old pure-OR ranker to
+   fail, so the evaluator provably catches off-topic drift. The Kiwix-library check
+   downloads a fixture book through a fake server with an interrupted transfer, and
+   requires the resumed file to hash the same as a straight download. It also requires a
+   duplicate to be refused, a newer version to count as an update, and a corrupted file
+   to be rejected. `doctor --live` also probes each public source once from your
    network and reports which ones answer.
 
 Report the JSON/summary back. If any check fails, fix and re-run - never report
@@ -132,6 +140,8 @@ success on a failing check.
 | Evidence verifier | `openatlas/investigate/verify.py` | Findings get independent re-checks, not echoed claims. |
 | Local AI probe | `openatlas/llm/ollama_client.py` | Detects missing Ollama/GPU so LLM tools degrade instead of erroring. |
 | Brain store + search | `openatlas/kb/store.py`, `openatlas/kb/retrieve.py` | Skills that answer from the brain get cited, retrievable passages. |
+| Relevance evaluator | `openatlas/kb/evaluate.py` (`openatlas kb eval`) | P@1 / MRR@5 / nDCG@5 / off-topic rate on a look-alike corpus and on your own brain, so you no longer judge by hand whether cited articles fit the question. |
+| Kiwix library verifier | `openatlas/kb/library.py` (`openatlas kb library verify`) | Multi-GB books are SHA-256-checked against Kiwix's published checksum before going live; duplicates are refused. |
 | Knowledge-graph visualizer | `openatlas/utils/knowledge_graph.py` (ATSMATRIX) | Shows a case's evidence or the brain's growth as a graph, so cross-links and gaps are visible instead of re-checked by hand. |
 | Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 

@@ -236,6 +236,83 @@ def check_brain() -> Tuple[str, str]:
     return _fail(f"your brain: '{row['title']}' not found in top 5 for its own title")
 
 
+def check_search_relevance() -> Tuple[str, str]:
+    """Known-good / known-bad: the real ranker must stay on-topic on a corpus full of
+    look-alikes, and the old any-word ranker must FAIL the same evaluation - proving the
+    evaluator can still catch an off-topic regression."""
+    from openatlas.kb import evaluate
+
+    good = evaluate.eval_fixture()
+    bad = evaluate.eval_fixture(evaluate.legacy_or_search)
+    m = good["metrics"]
+    if good["ok"] and not bad["ok"]:
+        return _pass(f"P@1 {m['p_at_1']}, MRR {m['mrr']}, off-topic {m['off_topic']:.0%} on "
+                     f"{good['queries']} look-alike queries; old ranker correctly rejected "
+                     f"({bad['metrics']['off_topic']:.0%} off-topic)")
+    if not good["ok"]:
+        worst = "; ".join(f"{f['q']} -> {f['got'][:3]}" for f in good["failures"][:3])
+        return _fail(f"search drifts off-topic: {m} - {worst}")
+    return _fail("evaluator accepted the known-bad ranker - it can no longer detect drift")
+
+
+def check_library() -> Tuple[str, str]:
+    """Kiwix library on fixtures: duplicate rules, checksum gate, and resume = identical file."""
+    import hashlib
+
+    from openatlas.kb import kiwix, library, store
+
+    data = bytes(range(256)) * 4096  # 1 MiB fake ZIM body
+    sha = hashlib.sha256(data).hexdigest()
+    base = "https://download.kiwix.org/zim/wikipedia/"
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        name = str(req.url).rsplit("/", 1)[-1]
+        if name.endswith(".meta4"):
+            good = "bad" not in name
+            xml = ('<metalink xmlns="urn:ietf:params:xml:ns:metalink"><file name="f"><hash '
+                   f'type="sha-256">{sha if good else "0" * 64}</hash><url>{base}{name[:-6]}</url>'
+                   '</file></metalink>')
+            return httpx.Response(200, content=xml.encode())
+        rng = req.headers.get("range")
+        start = int(rng.split("=")[1].rstrip("-")) if rng else 0
+        return httpx.Response(206 if rng else 200, content=data[start:])
+
+    def entry(fn: str) -> Dict[str, Any]:
+        b, v = library.split_filename(fn)
+        return {"uuid": fn, "filename": fn, "book": b, "version": v, "url": base + fn,
+                "meta4": base + fn + ".meta4", "size": len(data)}
+
+    saved = library.TRANSPORT
+    library.TRANSPORT = httpx.MockTransport(handler)
+    try:
+        with tempfile.TemporaryDirectory() as d, store.use_path(Path(d) / "brain.sqlite"):
+            rid = library.enqueue(entry("wikipedia_en_x_2026-01.zim"))
+            Path(library.get(rid)["path"] + ".part").write_bytes(data[:300_000])  # interrupted
+            resumed = library.download(rid) == "ready" and library.verify(rid)["ok"] is True
+            dup_refused = False
+            try:
+                library.check_duplicate(entry("wikipedia_en_x_2026-01.zim"))
+            except library.Duplicate:
+                dup_refused = True
+            update_ok = library.check_duplicate(entry("wikipedia_en_x_2026-05.zim")) == rid
+            bad = library.enqueue(entry("wikipedia_en_bad_2026-01.zim"))
+            corrupt_rejected = library.download(bad) == "failed"
+    finally:
+        library.TRANSPORT = saved
+    checks = {"resume gives the verified file": resumed, "duplicate refused": dup_refused,
+              "newer version = update": update_ok, "corrupt download rejected": corrupt_rejected}
+    failed = [k for k, v in checks.items() if not v]
+    if failed:
+        return _fail("; ".join(failed) + " - FAILED")
+    extras = []
+    if not library.libzim_available():
+        extras.append("feeding the brain needs: pip install libzim")
+    if not kiwix.binary():
+        extras.append("reading inside Atlas needs: sudo dnf install kiwix-tools")
+    detail = "resume + checksum + duplicate rules verified"
+    return ("warn", f"{detail}; {'; '.join(extras)}") if extras else _pass(detail)
+
+
 CHECKS: List[Check] = [
     ("Schema validator", check_schema_validator),
     ("ToolResult validator", check_toolresult_validator),
@@ -248,6 +325,8 @@ CHECKS: List[Check] = [
     ("Network policy", check_net_policy),
     ("Local AI / GPU probe", check_local_ai),
     ("Brain retrievability", check_brain),
+    ("Search relevance", check_search_relevance),
+    ("Kiwix library", check_library),
 ]
 
 

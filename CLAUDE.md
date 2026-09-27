@@ -39,6 +39,12 @@ must both pass (CI runs them).
   => robots-gated, data brokers skipped). Return `SourceResult`; set `ok=False` + `error`
   on network failure - never report "0 found" when nothing answered.
 - `openatlas/kb/` - the brain (SQLite FTS5 in `OPENATLAS_DATA_DIR/brain`).
+  - `retrieve.py` is search-engine style: a query parser, the title/alias index (`titles`), coverage, and a relevance gate. Every hit carries `why`.
+    - Any ranking change must keep `openatlas kb eval --fixture` passing. The doctor also requires the legacy ranker to fail.
+  - `library.py` handles Kiwix ZIM books: the OPDS catalog, Range-resume downloads, SHA-256 verification, duplicate/update rules, and libzim ingest.
+    - `kiwix.py` runs kiwix-serve on loopback, proxied at `/kiwix`.
+    - Only https `*.kiwix.org` URLs are accepted.
+    - Tests use `library.TRANSPORT` = `httpx.MockTransport`, plus real ZIMs built with `libzim.writer`.
 - `openatlas/utils/knowledge_graph.py` + `webserver/visualizer/atsmatrix.html` (ATSMATRIX fork) -
   case graphs (`/viz/<case>`) and the brain graph (`/viz/brain`, `openatlas kb graph`). Feed the
   visualizer new graph builders; don't change the visualizer file itself.

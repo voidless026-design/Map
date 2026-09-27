@@ -213,7 +213,8 @@ def cmd_kb(a: argparse.Namespace) -> int:
 
         hits = retrieve.search(a.query, k=a.k)
         for i, h in enumerate(hits, 1):
-            print(f"[{i}] {h['title']}  {h['url']}\n    {h['snippet']}")
+            print(f"[{i}] {h['title']}  {h['url']}\n    why: {h['why']} (score {h['score']})"
+                  f"\n    {h['snippet']}")
         if not hits:
             print("no hits (the topic has been queued for learning)")
             ingest.boost(a.query)
@@ -230,6 +231,22 @@ def cmd_kb(a: argparse.Namespace) -> int:
         store.set_meta("paused", op == "pause")
         print("paused" if op == "pause" else "resumed")
         return 0
+    if op == "library":
+        return _kb_library(a)
+    if op == "eval":
+        from openatlas.kb import evaluate
+
+        r = evaluate.eval_fixture() if a.fixture else evaluate.eval_brain(a.sample)
+        if a.json:
+            print(json.dumps(r, indent=2))
+        else:
+            print(r.get("note") or f"{r['queries']} queries: " + "  ".join(
+                f"{k}={v}" for k, v in r["metrics"].items()))
+            for f in r["failures"][:15]:
+                print(f"  ✗ {f['q']!r}: wanted {f['wanted']}, got {f['got'][:3]}")
+            print("search quality OK" if r["ok"] else "search quality BELOW thresholds "
+                  + json.dumps(evaluate.THRESHOLDS))
+        return 0 if r["ok"] else 1
     if op == "graph":
         from openatlas.utils import knowledge_graph
 
@@ -241,6 +258,75 @@ def cmd_kb(a: argparse.Namespace) -> int:
         return 0
     if op == "boost":
         print(f"queued {ingest.boost(a.topic)} task(s) for '{a.topic}'")
+        return 0
+    return 2
+
+
+def _kb_library(a: argparse.Namespace) -> int:
+    """Kiwix library: offline encyclopedias for the brain (multi-GB, verified, no duplicates)."""
+    from openatlas.kb import kiwix, library, store
+
+    op = a.lib_cmd
+    if op == "catalog":
+        for b in library.catalog(a.query or "", a.lang):
+            tag = {"have": "✓ have", "update": "↑ update", "new": ""}.get(b["status"], "")
+            print(f"{b['size'] / 1e9:7.1f} GB  {b['filename']:<48} {tag}")
+        return 0
+    if op == "list":
+        s = library.summary()
+        print(f"library: {s['dir']}  ({s['free_gb']} GB free)  libzim={'yes' if s['libzim'] else 'no'}")
+        for b in s["books"]:
+            print(f"  [{b['id']}] {b['filename']:<48} {b['status']:<11} "
+                  f"download {b['percent']}%  brain {b['ingest_percent']}%  {b['note'] or ''}")
+        return 0
+    if op == "get":
+        match = [b for b in library.fetch_catalog(a.name, a.lang, 60)
+                 if a.name in (b["filename"], b["book"], b["name"], b["uuid"])]
+        if not match:
+            print(f"nothing in the Kiwix catalog matches '{a.name}' (try: openatlas kb library catalog {a.name})")
+            return 1
+        book = sorted(match, key=lambda b: b["version"])[-1]  # newest version
+        try:
+            row_id = library.enqueue(book)
+        except library.Duplicate as exc:
+            print(f"not downloading: {exc}")
+            return 0
+        print(f"downloading {book['filename']} ({book['size'] / 1e9:.1f} GB) - Ctrl+C pauses, run again to resume")
+        try:
+            status = library.download(row_id)
+        except KeyboardInterrupt:
+            library.control(row_id, "pause")
+            print("paused")
+            return 0
+        print(f"{book['filename']}: {status} - {(library.get(row_id) or {}).get('note', '')}")
+        if status == "ready" and not a.no_ingest:
+            print("feeding the brain (resumable) ...")
+            print(library.ingest(row_id))
+        return 0 if status == "ready" else 1
+    if op == "ingest":
+        library.adopt_existing()
+        library.work()
+        return 0
+    if op in ("pause", "resume"):
+        store.set_meta("library_paused", op == "pause")
+        if op == "resume":
+            library.start_background()
+        print(f"library {op}d")
+        return 0
+    if op == "verify":
+        r = library.verify(a.id)
+        print(json.dumps(r, indent=2))
+        return 0 if r.get("ok") else 1
+    if op == "serve":
+        if not kiwix.ensure():
+            print(kiwix.HINT if not kiwix.binary() else "no verified books in the library yet")
+            return 1
+        print(f"Kiwix reader for {kiwix.status()['books']} book(s) at http://127.0.0.1:{kiwix.PORT}/kiwix/ "
+              "(also inside Atlas: Library tab). Ctrl+C to stop.")
+        try:
+            kiwix._proc.wait()
+        except KeyboardInterrupt:
+            kiwix.stop()
         return 0
     return 2
 
@@ -327,6 +413,26 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("question")
     ks.add_parser("pause", help="pause ingestion")
     ks.add_parser("resume", help="resume ingestion")
+    x = ks.add_parser("library", help="Kiwix offline encyclopedias: catalog, download, feed the brain")
+    ls = x.add_subparsers(dest="lib_cmd", required=True)
+    y = ls.add_parser("catalog", help="search the official Kiwix catalog")
+    y.add_argument("query", nargs="?", default="")
+    y.add_argument("--lang", default="eng")
+    ls.add_parser("list", help="books in your library, download and brain progress")
+    y = ls.add_parser("get", help="download a book (resumable, checksum-verified, never twice)")
+    y.add_argument("name", help="book or file name, e.g. wikipedia_en_all_nopic")
+    y.add_argument("--lang", default="")
+    y.add_argument("--no-ingest", action="store_true", help="download only")
+    ls.add_parser("ingest", help="feed verified books into the brain (resumes)")
+    ls.add_parser("pause", help="pause downloads")
+    ls.add_parser("resume", help="resume downloads")
+    y = ls.add_parser("verify", help="re-check a file against its published SHA-256")
+    y.add_argument("id", type=int)
+    ls.add_parser("serve", help="read your books with Kiwix (kiwix-serve)")
+    x = ks.add_parser("eval", help="measure search relevance (P@1, MRR, nDCG, off-topic rate)")
+    x.add_argument("--fixture", action="store_true", help="use the built-in look-alike corpus")
+    x.add_argument("--sample", type=int, default=200, help="articles to sample from your brain")
+    x.add_argument("--json", action="store_true")
     x = ks.add_parser("graph", help="show the brain in the knowledge-graph visualizer")
     x.add_argument("--port", type=int, default=8765)
     x.add_argument("--no-serve", action="store_true", help="only write output/visualizer/")
