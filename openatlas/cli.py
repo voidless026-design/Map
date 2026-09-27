@@ -13,7 +13,7 @@ import json
 import sys
 from typing import Any, Dict, List, Optional
 
-COMMANDS = {"investigate", "run", "catalog", "serve", "cases", "kb", "doctor"}
+COMMANDS = {"investigate", "plan", "run", "catalog", "serve", "cases", "kb", "doctor"}
 
 
 def _kv(pairs: Optional[List[str]]) -> Dict[str, Any]:
@@ -70,6 +70,25 @@ def cmd_investigate(a: argparse.Namespace) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     _emit_report(report, a.json, a.md)
+    return 0
+
+
+def cmd_plan(a: argparse.Namespace) -> int:
+    """ATLAS loop, step 1: propose sources; prints the command so you decide whether to run it."""
+    import shlex
+
+    from openatlas.reasoning import loop
+
+    p = loop.plan_case(a.target, a.purpose or "", a.type or "")
+    if a.json:
+        print(json.dumps(p, indent=2))
+        return 0
+    print(f"Auto-plan ({p['mode']}): {len(p['steps'])} of {len(p['available'])} sources - {p['why']}")
+    for s in p["steps"]:
+        print(f"  · {s}")
+    purpose = a.purpose or "<purpose>"
+    print("\nRun it:\n  openatlas investigate " + shlex.quote(a.target) + " --sources "
+          + ",".join(p["steps"]) + " --purpose " + shlex.quote(purpose))
     return 0
 
 
@@ -251,6 +270,13 @@ def build_parser() -> argparse.ArgumentParser:
     fmt.add_argument("--json", action="store_true")
     fmt.add_argument("--md", action="store_true", help="Markdown report (default)")
     inv.set_defaults(func=cmd_investigate)
+
+    pl = sub.add_parser("plan", help="Auto-plan: propose which sources to run (ATLAS loop)")
+    pl.add_argument("target")
+    pl.add_argument("--purpose", help="why you are looking (a self-audit adds opt-in checks)")
+    pl.add_argument("--type", help="force the target type")
+    pl.add_argument("--json", action="store_true")
+    pl.set_defaults(func=cmd_plan)
 
     run = sub.add_parser("run", help="run one action by slug (what a GUI button does)")
     run.add_argument("slug")

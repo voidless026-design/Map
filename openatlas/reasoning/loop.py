@@ -93,3 +93,89 @@ def critique(goal: str, results: Dict[str, Any]) -> Dict[str, Any]:
 def plan_for(goal: str, target: str) -> List[str]:
     """Public entry: return an ordered function plan (LLM if available, else heuristic)."""
     return llm_plan(goal, target) if ollama_client.available() else infer_plan(target)
+
+
+# --------------------------------------------------------------------------- #
+# v2: the same plan -> execute -> check -> repair loop over evidence sources.
+# The GUI's "Auto-plan" button: the plan is only a proposal (tiles get selected),
+# a human reviews it and presses Run; after the case, `check_case` proposes one
+# repair round (retry failed sources, pivot to newly found identifiers).
+# --------------------------------------------------------------------------- #
+PIVOT_TYPES = {"email", "username", "phone", "ip", "domain", "url"}
+_SELF = re.compile(r"(?i)self|my own|own footprint")
+
+
+def _sources_for(kind: str) -> List[Any]:
+    from openatlas.investigate import sources
+
+    return sources.for_target(kind)
+
+
+def plan_case(target: str, purpose: str = "", forced_type: str = "") -> Dict[str, Any]:
+    """Propose which evidence sources to run for ``target`` and why.
+
+    Local AI picks from the sources that fit the target type; without it (or if its answer
+    is unusable) a heuristic takes the recommended sources, plus the opt-in ones when the
+    purpose is a self-audit (your own footprint)."""
+    from openatlas.investigate.detect import detect
+
+    t = detect(target, forced_type or None)
+    fitting = _sources_for(t.type)
+    ids = [s.id for s in fitting]
+    heuristic = [s.id for s in fitting if s.default or _SELF.search(purpose or "")]
+    base = {"target": t.to_dict(), "available": ids}
+    if ollama_client.available():
+        catalogue = {s.id: s.description for s in fitting}
+        raw = ollama_client.complete(
+            "You are an OSINT planner working only with public, unauthenticated sources. "
+            "Pick the sources (by id) worth running for this target and purpose, most useful "
+            'first. Return JSON: {"steps": ["id", ...], "why": "one sentence"}\n'
+            f"Target ({t.type}): {t.value}\nPurpose: {purpose or 'unspecified'}\n"
+            f"Sources: {json.dumps(catalogue)}",
+            system="You output strictly valid JSON.")
+        try:
+            data = json.loads(raw[raw.find("{"): raw.rfind("}") + 1]) if raw else {}
+            steps = [s for s in data.get("steps", []) if s in ids]
+            steps = list(dict.fromkeys(steps))
+            if steps:
+                return {**base, "mode": "local-ai", "steps": steps,
+                        "why": str(data.get("why", ""))[:300]}
+        except (ValueError, AttributeError):
+            log.debug("auto-plan: unusable LLM answer, using heuristic")
+    article = "an" if t.type[:1] in "aeiou" else "a"
+    why = (f"recommended sources for {article} {t.type}"
+           + (" plus opt-in account checks, because this is a self-audit"
+              if _SELF.search(purpose or "") and len(heuristic) > sum(s.default for s in fitting) else "")
+           + (" (local AI offline)" if not ollama_client.available() else ""))
+    return {**base, "mode": "heuristic", "steps": heuristic, "why": why}
+
+
+def check_case(report: Dict[str, Any]) -> Dict[str, Any]:
+    """The loop's check + repair step for a finished case.
+
+    Returns an assessment and at most one repair round: sources to retry (they failed) and
+    pivots (new identifiers the case confirmed or corroborated - each a follow-up case)."""
+    target = report.get("target", {})
+    failed = [r["source"] for r in report.get("searched", []) if not r.get("ok")]
+    pivots = []
+    for ent in report.get("entities", []):
+        value = str(ent.get("value", ""))
+        if (ent.get("type") in PIVOT_TYPES and value and value.lower() != str(target.get("value", "")).lower()
+                and (ent.get("confirmed") or len(ent.get("sources", [])) >= 2)):
+            pivots.append({"type": ent["type"], "value": value, "sources": ent.get("sources", [])})
+    pivots = pivots[:5]
+    s = report.get("summary", {})
+    assessment = (f"{s.get('confirmed', 0)} confirmed, {s.get('unverified', 0)} unverified, "
+                  f"{s.get('refuted', 0)} refuted from {s.get('sources_ok', 0)} sources"
+                  + (f"; {len(failed)} failed" if failed else "")
+                  + (f"; {len(pivots)} new identifier(s) worth a follow-up case" if pivots else ""))
+    mode = "heuristic"
+    if ollama_client.available() and (failed or pivots or s.get("findings")):
+        text = ollama_client.complete(
+            "In two sentences, assess whether this OSINT case met its purpose and what the most "
+            f"useful next step is.\nPurpose: {report.get('purpose')}\nSummary: {json.dumps(s)}\n"
+            f"Failed sources: {failed}\nNew identifiers: {json.dumps(pivots)}",
+            system="Be brief and factual. Never invent findings.", max_tokens=160)
+        if text:
+            assessment, mode = text.strip(), "local-ai"
+    return {"mode": mode, "assessment": assessment, "retry": failed, "pivots": pivots}

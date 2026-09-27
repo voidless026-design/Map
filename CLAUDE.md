@@ -42,6 +42,9 @@ must both pass (CI runs them).
 - `openatlas/utils/knowledge_graph.py` + `webserver/visualizer/atsmatrix.html` (ATSMATRIX fork) -
   case graphs (`/viz/<case>`) and the brain graph (`/viz/brain`, `openatlas kb graph`). Feed the
   visualizer new graph builders; don't change the visualizer file itself.
+- `openatlas/reasoning/loop.py` (ATLAS-inspired) - `plan_case` (Auto-plan / `openatlas plan`: proposes
+  sources, a human presses Run) and `check_case` (post-case check + one repair round). Local AI when
+  available, deterministic heuristic otherwise.
 - `openatlas/web/` - FastAPI + no-build SPA (`openatlas serve`, loopback only).
 - `openatlas/cli.py` - `investigate|run|catalog|serve|cases|kb|doctor`; `openatlas/catalog.py`
   gives every action a human title + kebab slug (no underscores in titles).
