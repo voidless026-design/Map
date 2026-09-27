@@ -56,5 +56,10 @@ jobs:
       - name: Tool doctor (verifies the verifiers on known-good/known-bad fixtures)
         run: python -m openatlas.utils.forge doctor
 
+      - name: Tool doctor from outside the repo (results must not depend on the cwd)
+        # Mirrors a user running `openatlas doctor` from their home folder, one level
+        # above the clone - this is how the secret-lint false FAIL was found.
+        run: cd .. && openatlas doctor
+
       - name: Skill linter (every SKILL.md, every documented command must run)
         run: python -m openatlas.utils.forge verify-skill --all

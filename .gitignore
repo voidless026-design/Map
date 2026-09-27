@@ -27,3 +27,4 @@ poetry.lock
 # Rust build artifacts
 rust_ext/target/
 *.so
+.claude/skill-drafts/

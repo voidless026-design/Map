@@ -13,6 +13,12 @@ def skills_dir() -> Path:
     return Path(Config.files.project_root) / ".claude" / "skills"
 
 
+def drafts_dir() -> Path:
+    """Generated skills wait here until they pass verification; only then are they promoted
+    into ``.claude/skills`` (so an unverified skill can never be live or break the doctor)."""
+    return Path(Config.files.project_root) / ".claude" / "skill-drafts"
+
+
 def list_skills(run_commands: bool = False) -> List[Dict[str, Any]]:
     out = []
     for d in sorted(p for p in skills_dir().glob("*") if (p / "SKILL.md").exists()):

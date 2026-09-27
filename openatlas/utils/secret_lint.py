@@ -47,10 +47,28 @@ _ASSIGN = re.compile(
 )
 
 
+#: A line ending in this comment is an intentional fixture (e.g. a fake key in a test that
+#: proves the lint works) and is not reported.
+IGNORE_PRAGMA = "secret-lint: ignore"
+
+#: Folders never scanned: virtualenvs and third-party code are not OpenAtlas source, and
+#: their examples/tests are full of sample keys.
+SKIP_DIRS = {".git", "__pycache__", "robots_cache", ".venv", "venv", "env", ".env",
+             "site-packages", "dist-packages", "node_modules", ".tox", ".nox", "build",
+             "dist", ".eggs", ".mypy_cache", ".ruff_cache", ".pytest_cache"}
+
+
+def default_target() -> Path:
+    """The installed ``openatlas`` package itself - never a path relative to the cwd."""
+    return Path(__file__).resolve().parent.parent
+
+
 def scan_text(text: str, source: str = "<string>") -> List[Dict[str, str]]:
     """Return a list of findings for a blob of text."""
     findings: List[Dict[str, str]] = []
     for lineno, line in enumerate(text.splitlines(), start=1):
+        if IGNORE_PRAGMA in line:
+            continue
         stripped = line.strip()
         for name, pat in SECRET_PATTERNS.items():
             if pat.search(line):
@@ -71,15 +89,24 @@ def scan_text(text: str, source: str = "<string>") -> List[Dict[str, str]]:
     return findings
 
 
-def scan_path(path: str, *, exts=(".py", ".yaml", ".yml", ".toml", ".env", ".txt")) -> List[Dict[str, str]]:
-    """Recursively scan a file or directory tree for secrets."""
+def iter_files(path, exts=(".py", ".yaml", ".yml", ".toml", ".env", ".txt")) -> List[Path]:
+    """Files under ``path`` that the lint covers (environment/vendored folders skipped)."""
     p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"secret lint target does not exist: {p}")
+    if p.is_file():
+        return [p]
+    root_parts = len(p.resolve().parts)
+    return [f for f in p.rglob("*") if f.suffix in exts and f.is_file()
+            and not SKIP_DIRS.intersection(f.resolve().parts[root_parts:])]
+
+
+def scan_path(path, *, exts=(".py", ".yaml", ".yml", ".toml", ".env", ".txt")) -> List[Dict[str, str]]:
+    """Recursively scan a file or directory tree for secrets.
+
+    Raises ``FileNotFoundError`` for a missing path, so a typo can never pass as "clean"."""
     findings: List[Dict[str, str]] = []
-    files = [p] if p.is_file() else [f for f in p.rglob("*") if f.suffix in exts and f.is_file()]
-    for f in files:
-        # Skip our own caches / VCS.
-        if any(part in {".git", "__pycache__", "robots_cache"} for part in f.parts):
-            continue
+    for f in iter_files(path, exts):
         try:
             findings.extend(scan_text(f.read_text(encoding="utf-8", errors="ignore"), str(f)))
         except OSError:
@@ -93,8 +120,12 @@ def main(argv=None) -> int:
     import sys
 
     args = argv if argv is not None else sys.argv[1:]
-    target = args[0] if args else "openatlas"
-    findings = scan_path(target)
+    target = args[0] if args else str(default_target())
+    try:
+        findings = scan_path(target)
+    except FileNotFoundError as exc:
+        print(exc)
+        return 2
     if findings:
         print(json.dumps(findings, indent=2))
         print(f"\n{len(findings)} finding(s) - FAIL")

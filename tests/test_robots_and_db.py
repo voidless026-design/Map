@@ -31,7 +31,8 @@ def test_db_roundtrip():
 
 
 def test_secret_lint_flags_paid_key():
-    findings = secret_lint.scan_text('openai_api_key = "sk-abcdef0123456789abcdef"')
+    fixture = 'openai_api_key = "sk-abcdef0123456789abcdef"'  # secret-lint: ignore
+    findings = secret_lint.scan_text(fixture)
     assert findings, "should flag a populated paid key + sk- literal"
 
 

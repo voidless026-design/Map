@@ -15,6 +15,7 @@ import re
 import sqlite3
 import threading
 from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional
 
@@ -75,7 +76,26 @@ _LOCK = threading.RLock()
 _INIT: set = set()
 
 
+#: Per-thread/task database override, used by the doctor's self-test so it can exercise the
+#: real store + search code on a throwaway brain without touching yours (or any global).
+_OVERRIDE: ContextVar[Optional[Path]] = ContextVar("openatlas_brain_override", default=None)
+
+
+@contextmanager
+def use_path(path: Path) -> Iterator[Path]:
+    """Point this thread/task at another brain file for the duration of the block."""
+    token = _OVERRIDE.set(Path(path))
+    try:
+        yield Path(path)
+    finally:
+        _OVERRIDE.reset(token)
+
+
 def db_path() -> Path:
+    override = _OVERRIDE.get()
+    if override is not None:
+        override.parent.mkdir(parents=True, exist_ok=True)
+        return override
     d = Path(Config.files.brain_dir)
     d.mkdir(parents=True, exist_ok=True)
     return d / "brain.sqlite"

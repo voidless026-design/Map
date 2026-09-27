@@ -160,8 +160,9 @@ def lint_skill(path: str, *, run_commands: bool = True) -> Dict[str, Any]:
             errors.append(f"references missing file {ref}")
     for mod in sorted(set(re.findall(r"`(openatlas(?:\.\w+)+)", body))):
         mod = mod.split(":")[0]
-        if importlib.util.find_spec(mod.rsplit(".", 1)[0] if not _is_module(mod) else mod) is None:
-            errors.append(f"references missing module {mod}")
+        target = mod if _is_module(mod) else mod.rsplit(".", 1)[0]  # module or module.attr
+        if not _is_module(target):
+            errors.append(f"references missing or unimportable module {mod}")
 
     from openatlas.utils.secret_lint import scan_text
 

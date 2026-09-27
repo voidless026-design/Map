@@ -72,14 +72,20 @@ def check_robots_guard() -> Tuple[str, str]:
 
 
 def check_secret_lint() -> Tuple[str, str]:
-    from openatlas.utils.secret_lint import scan_path, scan_text
+    from openatlas.utils.secret_lint import default_target, iter_files, scan_path, scan_text
 
     planted = scan_text('api_key = "' + "sk-" + "a1b2c3d4" * 4 + '"')
     clean = scan_text("def ok():\n    return 'nothing secret here'\n")
-    repo = scan_path("openatlas")
-    if planted and not clean and not repo:
-        return _pass("planted key caught; clean text and the codebase pass")
-    return _fail(f"planted={bool(planted)} clean={bool(clean)} repo_findings={len(repo)}")
+    # Always the installed package (absolute path): the result must not depend on the folder
+    # you run `openatlas doctor` from, and must never scan a virtualenv's site-packages.
+    target = default_target()
+    n_files = len(iter_files(target))
+    repo = scan_path(target)
+    if planted and not clean and n_files and not repo:
+        return _pass(f"planted key caught; clean text passes; {n_files} source files clean")
+    where = "; ".join(f"{f['source']}:{f['line']} ({f['rule']})" for f in repo[:3])
+    return _fail(f"planted caught={bool(planted)} clean flagged={bool(clean)} files={n_files} "
+                 f"findings={len(repo)} {where}")
 
 
 def check_scaffolder() -> Tuple[str, str]:
@@ -125,8 +131,13 @@ def check_skill_linter() -> Tuple[str, str]:
         rejected = not linter.lint_skill(str(bad), run_commands=False)["ok"]
     if not real and rejected:
         return _pass(f"{len(registry.list_skills())} project skills valid; broken skill rejected")
-    return _fail(f"invalid project skills: {[s['name'] + ': ' + '; '.join(s['errors']) for s in real]}"
-                 if real else "broken fixture was accepted")
+    if not real:
+        return _fail("broken fixture was accepted")
+    names = ", ".join(s["name"] for s in real)
+    detail = " | ".join(f"{s['name']}: {'; '.join(s['errors'])}" for s in real)
+    return _fail(f"{len(real)} skill(s) fail verification ({names}). Fix them, or move them to "
+                 f".claude/skill-drafts/ and re-run `python -m openatlas.utils.forge verify-skill "
+                 f"<name>`. Details: {detail}")
 
 
 def check_evidence_verifier() -> Tuple[str, str]:
@@ -190,18 +201,39 @@ def check_local_ai() -> Tuple[str, str]:
     return _pass(f"online; profile models ready ({len(rep['models'])} loaded)")
 
 
+_BRAIN_FIXTURE = ("Doctor fixture: Topological quantum field theory",
+                  "A topological quantum field theory is a quantum field theory which computes "
+                  "topological invariants. It links knot theory, low-dimensional topology and "
+                  "mathematical physics. " * 4)
+
+
 def check_brain() -> Tuple[str, str]:
+    """Self-test the brain's store + search on a throwaway brain (known-good / known-bad), then
+    report on your real brain - sampling one of its articles when it has any."""
     from openatlas.kb import retrieve, store
 
+    title, text = _BRAIN_FIXTURE
+    with tempfile.TemporaryDirectory() as d, store.use_path(Path(d) / "brain.sqlite"):
+        store.upsert_document(key="doctor:fixture", source="wikipedia", title=title, text=text,
+                              url="https://example.org/fixture", license="CC BY-SA 4.0")
+        found = any(h["key"] == "doctor:fixture"
+                    for h in retrieve.search("topological quantum field theory", k=5,
+                                             use_vectors=False))
+        nonsense = retrieve.search("zqxjv wqpfk", k=5, use_vectors=False)
+    if not found or nonsense:
+        return _fail(f"self-test: fixture found={found}, nonsense query returned {len(nonsense)} hits")
+
     with store.connect() as con:
+        n = con.execute("SELECT COUNT(*) FROM documents WHERE source='wikipedia'").fetchone()[0]
         row = con.execute("SELECT title, key FROM documents WHERE source='wikipedia' "
                           "ORDER BY RANDOM() LIMIT 1").fetchone()
     if not row:
-        return "warn", "brain is empty - press 'Grow the brain' (or `openatlas kb ingest`)"
+        return _pass("store + search self-test ok; your brain has 0 articles yet - grow it with "
+                     "`openatlas kb ingest` or 'Grow the brain'")
     hits = retrieve.search(row["title"], k=5, use_vectors=False)
     if any(h["key"] == row["key"] for h in hits):
-        return _pass(f"random article '{row['title']}' retrievable in top 5")
-    return _fail(f"'{row['title']}' not found in top 5 for its own title")
+        return _pass(f"self-test ok; {n} articles, random '{row['title']}' retrievable in top 5")
+    return _fail(f"your brain: '{row['title']}' not found in top 5 for its own title")
 
 
 CHECKS: List[Check] = [
