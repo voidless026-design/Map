@@ -57,11 +57,19 @@ def _phone_formats(v: str) -> List[str]:
         return [v]
 
 
+class SearchUnavailable(RuntimeError):
+    """No search backend is installed/configured - retrying other queries is pointless."""
+
+
 def _ddg(query: str, n: int) -> List[Dict[str, str]]:
     try:
         from ddgs import DDGS  # type: ignore
-    except Exception:
-        from duckduckgo_search import DDGS  # type: ignore
+    except ImportError:
+        try:
+            from duckduckgo_search import DDGS  # type: ignore
+        except ImportError:
+            raise SearchUnavailable("no search backend: run 'pip install ddgs' or set "
+                                    "OPENATLAS_SEARXNG_URL to a SearXNG instance") from None
     return [{"title": r.get("title", ""), "url": r.get("href") or r.get("url", ""),
              "snippet": r.get("body", "")} for r in DDGS().text(query, max_results=n)]
 
@@ -94,7 +102,10 @@ async def web_search(t: Target, net: Net) -> SourceResult:
                 hits = await _searxng(net, os.environ["OPENATLAS_SEARXNG_URL"], q, RESULTS_PER_QUERY)
             else:
                 hits = await asyncio.to_thread(_ddg, q, RESULTS_PER_QUERY)
-        except Exception as exc:  # rate limit / no package / network
+        except SearchUnavailable as exc:
+            errors = [str(exc)]
+            break
+        except Exception as exc:  # rate limit / network
             errors.append(f"{q}: {type(exc).__name__}: {exc}")
             continue
         for h in hits:

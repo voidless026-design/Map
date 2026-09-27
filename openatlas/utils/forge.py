@@ -121,6 +121,10 @@ publicly visible - OpenAtlas policy forbids those.
 
 {steps}
 
+```bash
+{commands}
+```
+
 ## Verification
 
 This skill is only done when every check below passes:
@@ -192,6 +196,7 @@ def scaffold_engine(*, engine: str, common_name: str, abbrev: str, function: str
 
 def scaffold_skill(*, name: str, description: str, purpose: str, triggers: List[str],
                    steps: List[str], verification: List[str], tools: List[str],
+                   commands: Optional[List[str]] = None,
                    root: Optional[Path] = None, force: bool = False) -> Path:
     """Write .claude/skills/<name>/SKILL.md from the template. Returns its path."""
     root = root or Path(Config.files.project_root) / ".claude" / "skills"
@@ -205,7 +210,8 @@ def scaffold_skill(*, name: str, description: str, purpose: str, triggers: List[
     target.write_text(SKILL_TEMPLATE.format(
         name=name, description=description.replace("\n", " "), purpose=purpose,
         triggers=bullets(triggers), steps=numbered(steps), verification=numbered(verification),
-        tools=bullets(tools)), encoding="utf-8")
+        tools=bullets(tools),
+        commands="\n".join(commands or ["openatlas catalog"])), encoding="utf-8")
     return target
 
 
@@ -241,12 +247,21 @@ def cmd_new_skill(a: argparse.Namespace) -> int:
             name=a.name, description=a.description, purpose=a.purpose or a.description,
             triggers=a.trigger, steps=a.step or ["Describe the steps."],
             verification=a.verify or ["Every output claim is re-checked against an independent source."],
-            tools=a.tool or ["`openatlas/utils/smoke_run.py` - dry-run verification"], force=a.force)
+            tools=a.tool or ["`openatlas/utils/smoke_run.py` - dry-run verification"],
+            commands=a.command, force=a.force)
     except FileExistsError as exc:
         print(exc)
         return 1
-    print(f"wrote {path}\n\nNext: python -m openatlas.utils.forge verify-skill {a.name}")
-    return 0
+    print(f"wrote {path}")
+    # Generate -> verify in one step: the new skill is linted immediately.
+    from openatlas.skills import linter
+
+    r = linter.lint_skill(str(path.parent), run_commands=not a.no_commands)
+    for e in r["errors"]:
+        print(f"  ✗ {e}")
+    print("verified: ok" if r["ok"] else "verification FAILED - edit the SKILL.md and run "
+          f"`python -m openatlas.utils.forge verify-skill {a.name}`")
+    return 0 if r["ok"] else 1
 
 
 def cmd_verify_skill(a: argparse.Namespace) -> int:
@@ -323,7 +338,10 @@ def build_parser() -> argparse.ArgumentParser:
     ns.add_argument("--step", action="append", help="a step (repeatable)")
     ns.add_argument("--verify", action="append", help="a verification check (repeatable)")
     ns.add_argument("--tool", action="append", help="a tool the skill needs and why (repeatable)")
+    ns.add_argument("--command", action="append",
+                    help="a command the skill runs (repeatable; each is --help-probed on verify)")
     ns.add_argument("--force", action="store_true")
+    ns.add_argument("--no-commands", action="store_true", help="skip running documented commands")
     ns.set_defaults(func=cmd_new_skill)
 
     vs = sub.add_parser("verify-skill", help="lint a skill (or --all)")

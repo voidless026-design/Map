@@ -99,4 +99,7 @@ async def whatsmyname(t: Target, net: Net) -> SourceResult:
             confidence=0.55 if r["protected"] else 0.7,
             data={"site": r["site"], "category": r["category"], "check_url": r["check_url"]},
         ))
+    if results and not found and unknown >= 0.9 * len(results):
+        res.ok, res.error = False, (f"only {len(results) - unknown} of {len(results)} sites gave a "
+                                    "usable answer - check your network connection")
     return res

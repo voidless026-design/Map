@@ -9,7 +9,8 @@ description: >-
   profile URL, cross-check coordinates against EXIF + OSM, confirm MX + Holehe, second
   breach source, agree/disagree across image detectors), then emits a corroboration
   table with a confidence per claim and explicitly flags anything unverifiable rather
-  than asserting it.
+  than asserting it. Runs automatically at the end of every `openatlas investigate` case;
+  use it by hand for pasted outputs or older results.
 license: MIT
 metadata:
   project: OpenAtlas
@@ -25,6 +26,25 @@ coordinates consistent with the photo's EXIF? is that email deliverable? is the 
 corroborated elsewhere? This skill does that re-checking automatically, against a
 **different, free source** than the one that produced the claim, so a single tool's
 mistake or hallucination doesn't slip through.
+
+## Automatic mode (default since v2)
+
+You rarely need to run this by hand any more. Every `openatlas investigate` case (CLI or
+GUI) ends with an automatic pass in `openatlas/investigate/verify.py`:
+
+- **accounts** found by WhatsMyName -> the profile page is opened (robots-gated) and must
+  load **and** show the username -> *confirmed*; a 404 -> *refuted*; anything else ->
+  *unverified* with the HTTP status as the reason;
+- **breaches** -> cross-checked against the second XposedOrNot endpoint;
+- **first-party API** results (GitHub, Keybase, Reddit, HN...) are marked confirmed with
+  the API named as the method;
+- everything else (search snippets, Holehe, reverse-image links) is labelled
+  *unverified* **with the reason**, never silently passed;
+- `openatlas/investigate/correlate.py` then raises confidence only when independent
+  domains agree.
+
+The GUI shows the badge and the "why" on every evidence card; the Markdown report
+shows the same. The manual commands below remain for pasted outputs and old results.
 
 ## When to trigger
 
@@ -67,6 +87,27 @@ It returns a JSON **corroboration report**: for each claim a `verified` boolean 
 `null` when it can't be checked), the independent `source` used, the `evidence`, and a
 `confidence` in `[0,1]`. Present it as a table and **call out every `verified: null`
 row explicitly** — "could not confirm" is a first-class result, not a silent pass.
+
+## Tools this skill needs
+
+| Tool | Module | Why |
+|---|---|---|
+| Automatic re-checker | `openatlas/investigate/verify.py` | Runs on every case; labels confirmed / refuted / unverified with a reason. |
+| Correlator | `openatlas/investigate/correlate.py` | Confidence rises only with independent sources. |
+| Manual verifier | `openatlas/utils/verify_findings.py` | Re-checks pasted or older outputs by finding type. |
+| Bounded HTTP client | `openatlas/net/client.py` | Robots-gated page fetches, capped bodies, no credentials, no data brokers. |
+| Tool doctor | `openatlas/skills/doctor.py` | Its "Evidence verifier" check proves the three labels come out right on fixtures. |
+
+```bash
+openatlas doctor   # includes the evidence-verifier self-test
+```
+
+## Verification
+
+The verifier is itself verified: `openatlas doctor` feeds it a profile page showing the
+username, a 404, and a page without the username, through a mock transport, and
+requires confirmed / refuted / unverified respectively. A report is acceptable only when every row has a `verified`
+value (true / false / null), a named method or source, and - for null - a reason.
 
 ## Guardrails
 

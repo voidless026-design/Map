@@ -30,9 +30,13 @@ async def github(t: Target, net: Net) -> SourceResult:
         searched = f"GitHub users matching '{t.value}' ({data.get('total_count', 0)} total)"
     res = SourceResult("github", ok=True, searched=searched)
     for login in logins:
-        u = await net.get_json(f"{API}/users/{login}",
-                               headers={"Accept": "application/vnd.github+json"})
+        r = await net.get(f"{API}/users/{login}", headers={"Accept": "application/vnd.github+json"})
+        if r.status_code == 404:
+            continue  # a real answer: no such user
+        u = r.json() if r.ok else None
         if not u or "login" not in u:
+            res.ok, res.error = False, (r.error or f"GitHub API answered HTTP {r.status_code} "
+                                        "(unreachable or rate-limited, 60/h unauthenticated)")
             continue
         details = {k: u.get(k) for k in FIELDS if u.get(k) not in (None, "")}
         summary = ", ".join(f"{k}: {v}" for k, v in details.items()
