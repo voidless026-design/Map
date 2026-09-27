@@ -11,6 +11,7 @@ from __future__ import annotations
 import datetime as _dt
 import hashlib
 import json
+import os
 import re
 import sqlite3
 import threading
@@ -113,14 +114,59 @@ def use_path(path: Path) -> Iterator[Path]:
         _OVERRIDE.reset(token)
 
 
+class DataDirError(RuntimeError):
+    """OPENATLAS_DATA_DIR points somewhere Atlas can't write (e.g. an unmounted drive)."""
+
+
+def ensure_dir(d: Path) -> Path:
+    """mkdir -p, turning a cryptic OSError into one readable, actionable message."""
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        if not os.access(d, os.W_OK):
+            raise PermissionError(f"{d} is read-only")
+    except OSError as exc:
+        env = os.getenv("OPENATLAS_DATA_DIR")
+        where = f"OPENATLAS_DATA_DIR={env}" if env else str(d)
+        raise DataDirError(f"can't write to {where} ({exc.strerror or exc}). Is the drive mounted? "
+                           "Run `openatlas kb where` to see your drives and the exact line to use.") from exc
+    return d
+
+
+_MOUNT_ROOTS = ("/run/media/", "/media/", "/mnt/")
+
+
+def where() -> Dict[str, Any]:
+    """Where the brain + library live, and the removable/extra drives it could live on instead."""
+    import shutil
+
+    import psutil
+
+    data = Path(Config.files.brain_dir).parent
+    probe = data if data.exists() else next((p for p in data.parents if p.exists()), Path("/"))
+    drives = []
+    for part in psutil.disk_partitions(all=False):
+        mnt = part.mountpoint
+        if not mnt.startswith(_MOUNT_ROOTS) or part.fstype in ("squashfs", "iso9660", "udf", "tmpfs"):
+            continue  # CDs, snaps and RAM disks can't hold a brain
+        try:
+            free = shutil.disk_usage(mnt).free / 1e9
+        except OSError:
+            continue
+        target = f"{mnt.rstrip('/')}/openatlas"
+        drives.append({"mount": mnt, "device": part.device, "fstype": part.fstype,
+                       "free_gb": round(free, 1), "writable": os.access(mnt, os.W_OK),
+                       "export": f"export OPENATLAS_DATA_DIR='{target}'"})
+    return {"data_dir": str(data), "env": os.getenv("OPENATLAS_DATA_DIR"),
+            "exists": data.exists(), "writable": os.access(probe, os.W_OK),
+            "free_gb": round(shutil.disk_usage(probe).free / 1e9, 1), "drives": drives}
+
+
 def db_path() -> Path:
     override = _OVERRIDE.get()
     if override is not None:
-        override.parent.mkdir(parents=True, exist_ok=True)
+        ensure_dir(override.parent)
         return override
-    d = Path(Config.files.brain_dir)
-    d.mkdir(parents=True, exist_ok=True)
-    return d / "brain.sqlite"
+    return ensure_dir(Path(Config.files.brain_dir)) / "brain.sqlite"
 
 
 def now() -> str:

@@ -57,8 +57,7 @@ class Duplicate(Exception):
 def library_dir() -> Path:
     override = store._OVERRIDE.get()  # the doctor's throwaway brain gets a throwaway library
     d = (override.parent if override is not None else Path(Config.files.brain_dir).parent) / "library"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return store.ensure_dir(d)
 
 
 def _client(timeout: float = 30.0) -> httpx.Client:
@@ -146,9 +145,91 @@ def fetch_catalog(q: str = "", lang: str = "eng", count: int = 40) -> List[Dict[
         return parse_catalog(r.text)
 
 
-def catalog(q: str = "", lang: str = "eng", count: int = 40) -> List[Dict[str, Any]]:
-    """Catalog entries annotated with what the library already has."""
-    books = fetch_catalog(q, lang, count)
+PAGE = 100
+MAX_ENTRIES = 1000
+# ISO 639-1 codes used in Kiwix file names -> the ISO 639-3 codes the catalog filters on
+_LANG3 = {"en": "eng", "fr": "fra", "de": "deu", "es": "spa", "it": "ita", "pt": "por", "ru": "rus",
+          "zh": "zho", "ja": "jpn", "ar": "ara", "nl": "nld", "pl": "pol", "sv": "swe", "uk": "ukr",
+          "fa": "fas", "tr": "tur", "ko": "kor", "hi": "hin", "he": "heb", "cs": "ces", "fi": "fin",
+          "vi": "vie", "id": "ind", "el": "ell", "hu": "hun", "ro": "ron", "da": "dan", "no": "nor"}
+
+
+class NotFound(LookupError):
+    """No catalog book matches; ``choices`` lists the nearest names (maybe several to pick from)."""
+
+    def __init__(self, msg: str, choices: Optional[List[str]] = None):
+        super().__init__(msg)
+        self.choices = choices or []
+
+
+def _name_like(q: str) -> bool:
+    return "_" in q or q.endswith(".zim")
+
+
+def _names(b: Dict[str, Any]) -> List[str]:
+    full = f"{b['name']}_{b['flavour']}" if b.get("flavour") and not b["name"].endswith(b["flavour"]) \
+        else b.get("name", "")
+    return [n.lower() for n in (b["filename"], b["book"], b.get("name", ""), full, b.get("uuid", "")) if n]
+
+
+def find_books(q: str = "", lang: str = "eng", limit: int = 40) -> Tuple[List[Dict[str, Any]], int]:
+    """Search the catalog the way people type: words, or a book/file name like
+    ``wikipedia_en_all_nopic``. Kiwix's own search only matches titles and descriptions, so a
+    name is searched by its first word and language, then matched on file names here.
+    Pages through the results (the server returns at most ``count`` per request).
+    Returns (books, total matching)."""
+    q = q.strip()
+    server_q, want, found = q, "", []
+    if _name_like(q):
+        want = split_filename(q)[0].lower() if q.endswith(".zim") else q.lower()
+        parts = want.split("_")
+        server_q = parts[0]
+        if len(parts) > 1:  # the name says which language (wikipedia_fr_...): trust it
+            lang = _LANG3.get(parts[1].split("-")[0], lang)
+    with _client() as c:
+        # a local title (e.g. "Wikipédia") can hide a name from the word search: then scan the language
+        for sq in ([server_q, ""] if want and server_q else [server_q]):
+            start = 0
+            while start < MAX_ENTRIES:
+                params = {"count": str(PAGE), "start": str(start)}
+                if sq:
+                    params["q"] = sq
+                if lang:
+                    params["lang"] = lang
+                r = c.get(CATALOG, params=params)
+                r.raise_for_status()
+                page = parse_catalog(r.text)
+                found += [b for b in page if not want or any(n.startswith(want) for n in _names(b))]
+                if len(page) < PAGE or (not want and limit and len(found) >= limit):
+                    break
+                start += PAGE
+            if found or not lang:
+                break
+    return (found[:limit] if limit else found), len(found)
+
+
+def resolve(name: str, lang: str = "") -> Dict[str, Any]:
+    """The newest catalog book whose file/book name, catalog name or uuid is exactly ``name``.
+    Several different books starting with ``name`` -> NotFound listing them to pick from."""
+    books, _ = find_books(name, lang, 0)
+    low = name.lower()
+    key = split_filename(low)[0] if low.endswith(".zim") else low
+    same_file = [b for b in books if b["filename"].lower() == low]
+    same_book = same_file or [b for b in books if b["book"].lower() == key]
+    if not same_book:  # catalog name / uuid: fine only if it means one book
+        same_book = [b for b in books if key in _names(b)]
+        if len({b["book"] for b in same_book}) > 1:
+            same_book = []
+    if same_book:
+        return sorted(same_book, key=lambda b: b["version"])[-1]
+    choices = sorted({b["book"] for b in books})
+    if choices:
+        raise NotFound(f"'{name}' matches {len(choices)} books - pick one", choices)
+    raise NotFound(f"nothing in the Kiwix catalog is called '{name}'")
+
+
+def annotate(books: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Mark each catalog book new / update / have (with the duplicate reason)."""
     for b in books:
         try:
             dup = check_duplicate(b)
@@ -157,6 +238,11 @@ def catalog(q: str = "", lang: str = "eng", count: int = 40) -> List[Dict[str, A
         except Duplicate as exc:
             b["status"], b["reason"] = "have", str(exc)
     return books
+
+
+def catalog(q: str = "", lang: str = "eng", count: int = 40) -> List[Dict[str, Any]]:
+    """Catalog entries annotated with what the library already has."""
+    return annotate(find_books(q, lang, count)[0])
 
 
 def parse_meta4(xml_text: str) -> Dict[str, Any]:

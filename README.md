@@ -119,10 +119,16 @@ The legacy OAtlas flags still work: `openatlas -f check_usernames`,
 
 ## The brain (knowledge base)
 
-Put it on a big disk and start it:
+By default the brain and books live in `data/` inside your clone. To put them on another
+drive, plug it in, open it once in Files (that mounts it), then let Atlas print the exact line:
 
 ```bash
-export OPENATLAS_DATA_DIR=/run/media/$USER/BigHDD/openatlas   # put it in ~/.bashrc
+openatlas kb where            # data folder, free space, and a ready-to-paste line per drive
+```
+
+Then start it:
+
+```bash
 openatlas kb seeds            # 1,787 unique topics across your 13 divisions
 openatlas kb ingest --max 50  # learn a batch now
 openatlas kb stats            # size, progress, tiers
@@ -182,9 +188,13 @@ Each book is a single multi-gigabyte ZIM file, and Atlas feeds its articles into
 ```bash
 pip install libzim                          # read ZIM files (free)
 sudo dnf install kiwix-tools                # optional: read the books inside Atlas
-openatlas kb library catalog wikipedia --lang eng
-openatlas kb library get wikipedia_en_all_nopic   # resumable, checksum-verified
-openatlas kb library list                   # progress; pause/resume <id>
+openatlas kb library catalog wikipedia --lang eng   # words...
+openatlas kb library catalog wikipedia_en_all       # ...or a name: maxi / nopic / mini
+openatlas kb library get wikipedia_en_100           # 0.3 GB - a quick first test
+openatlas kb library get wikipedia_en_all_nopic     # resumable, checksum-verified
+openatlas kb library list                   # progress; each book has a number, e.g. [1]
+openatlas kb library pause 1                # pause book 1 (no number: all downloads)
+openatlas kb library resume 1
 openatlas kb library serve                  # Kiwix reader at http://127.0.0.1:8602/kiwix/
 ```
 
