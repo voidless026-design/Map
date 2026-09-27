@@ -29,6 +29,7 @@ publicly visible - OpenAtlas policy forbids those.
 2. Queue a topic ahead of the rest with `openatlas kb boost`, or the whole taxonomy with `openatlas kb plan`.
 3. Ingest now (`openatlas kb ingest`) or leave the systemd unit / `openatlas kb daemon` to grow it politely in the background.
 4. Answer from the brain with `openatlas kb ask`; every sentence cites a stored article and its licence.
+5. Show the user how the brain has grown with `openatlas kb graph` (or the GUI's *Brain graph* button): the ATSMATRIX visualizer draws each division filling in.
 
 ```bash
 openatlas kb stats
@@ -38,6 +39,7 @@ openatlas kb ingest --max 25
 openatlas kb search "algebraic topology"
 openatlas kb ask "What is a homotopy?"
 openatlas kb pause
+openatlas kb graph --no-serve
 ```
 
 ## Verification
@@ -54,6 +56,7 @@ python -m openatlas.utils.forge doctor
 3. Every stored document keeps its source URL, revision id and the CC BY-SA 4.0 attribution.
 4. No duplicates: documents are keyed by canonical title, so re-ingesting updates in place.
 5. Ingestion refuses to run with less than 20 GB free and honours the pause flag.
+6. The brain graph agrees with `openatlas kb stats`: the article count on its centre node matches, and a division whose field was just learned turns from amber to lit.
 
 ## Tools this skill needs
 
@@ -61,6 +64,7 @@ python -m openatlas.utils.forge doctor
 - `openatlas/kb/wikipedia.py` - MediaWiki API client (maxlag, serial, Retry-After)
 - `openatlas/kb/ingest.py` - tiered queue, relevance filter, disk guard
 - `openatlas/kb/retrieve.py` - BM25 + optional vectors (RRF)
+- `openatlas/utils/knowledge_graph.py` + the ATSMATRIX visualizer - `build_graph_from_brain` draws the brain so growth can be checked at a glance
 - Local Ollama (optional) - `nomic-embed-text` for vectors and a small model for cited answers
 
 ## Definition of done

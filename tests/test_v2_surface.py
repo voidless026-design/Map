@@ -188,3 +188,36 @@ def test_web_brain_and_skills(client):
     assert "percent" in b
     skills = client.get("/api/skills").json()
     assert any(s["name"] == "skill-forge" for s in skills)
+
+
+# ---------------------------------------------------------------- brain graph (visualizer)
+def test_brain_graph_grows_with_the_brain():
+    from openatlas.kb import taxonomy
+    from openatlas.utils import knowledge_graph
+
+    empty = knowledge_graph.build_graph_from_brain()
+    divs = [n for n in empty["nodes"] if n["id"].startswith("div_")]
+    assert len(divs) == len(taxonomy.divisions(taxonomy.parse()))  # all 13 divisions
+    assert all(n["status"] == "degraded" for n in divs)  # amber until something is learned
+
+    formal, life = "domain:formal-sciences", "domain:life-sciences"
+    store.upsert_document(key="wikipedia:Group theory", source="wikipedia", title="Group theory",
+                          text="Group theory studies groups. " * 30, url="https://w/Group_theory",
+                          tags=[formal, "tier:0"])
+    store.upsert_document(key="wikipedia:Biostatistics", source="wikipedia", title="Biostatistics",
+                          text="Biostatistics applies statistics to biology. " * 30,
+                          url="https://w/Biostatistics", tags=[formal, life, "tier:2"])
+    g = knowledge_graph.build_graph_from_brain()
+    labels = {n["label"] for n in g["nodes"]}
+    assert "Group theory" in labels and "Biostatistics" in labels
+    assert any(lbl.startswith("Formal Sciences 2/") for lbl in labels)
+    assert any(n["label"].startswith("Depth 1") for n in g["nodes"])  # grew beyond the seeds
+    assert any(e["kind"] == "cross-link" for e in g["edges"])  # one article, two divisions
+    ids = {n["id"] for n in g["nodes"]}
+    assert all(e["from"] in ids and e["to"] in ids for e in g["edges"])  # no dangling edges
+
+
+def test_web_brain_graph_page(client):
+    r = client.get("/viz/brain")
+    assert r.status_code == 200
+    assert "window.ATLAS_GRAPH" in r.text and "OpenAtlas brain" in r.text

@@ -90,6 +90,8 @@ export OPENATLAS_SEARXNG_URL=http://127.0.0.1:8888
   - "What was searched" lists every source, including the ones that failed.
 - **Cases.** History, a Markdown report and a graph view (the ATSMATRIX visualizer).
 - **Brain.** One progress bar with start and pause, plus Ask, which answers with citations.
+  **Brain graph ↗** opens your knowledge base in the ATSMATRIX visualizer: each of your 13
+  divisions lights up as it is learned (reload the page to watch it grow).
 - **Skills.** The skill cards and the doctor results.
 - **System.** Hardware, profile, Ollama/GPU status and the data path.
 
@@ -119,6 +121,7 @@ export OPENATLAS_DATA_DIR=/run/media/$USER/BigHDD/openatlas   # put it in ~/.bas
 openatlas kb seeds            # 1,787 unique topics across your 13 divisions
 openatlas kb ingest --max 50  # learn a batch now
 openatlas kb stats            # size, progress, tiers
+openatlas kb graph            # see it in the visualizer (http://127.0.0.1:8765)
 openatlas kb ask "What is a homotopy?"
 ```
 
@@ -201,6 +204,15 @@ make skills   # lint every SKILL.md and run its commands
 ## Credits & licences
 
 Independent work inspired by OAtlas, PyBA, OpenJarvis (Apache-2.0) and ATLAS (AGPL-3.0).
+
+Where the integrated projects live:
+
+| Project | In OpenAtlas |
+|---|---|
+| ATSMATRIX Agent VisualizeR (MIT) | `openatlas/webserver/visualizer/` - case graphs and the **Brain graph** |
+| OpenJarvis (Apache-2.0) | `openatlas/core/registry.py` - the tool registry every engine uses |
+| ATLAS (AGPL-3.0) | `openatlas/reasoning/loop.py` - plan → execute → check → repair (library module; the investigation pipeline follows the same idea) |
+
 It bundles a modified fork of the ATSMATRIX visualizer (MIT) and uses the WhatsMyName
 dataset, and optionally Holehe. Wikipedia text is CC BY-SA 4.0. See [NOTICE](NOTICE).
 OpenAtlas itself is MIT licensed.

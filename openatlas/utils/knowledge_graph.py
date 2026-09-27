@@ -325,3 +325,101 @@ def build_graph_from_case(report: Dict[str, Any]) -> Dict[str, Any]:
                      "target": t.get("value"), "ollama_host": Config.llm.host,
                      "model": profiles.active().text_model},
             "clusters": CLUSTERS, "nodes": nodes, "edges": edges, "events": events}
+
+
+# --------------------------------------------------------------------------- #
+# The brain (knowledge base) as a graph - watch it grow
+# --------------------------------------------------------------------------- #
+_BRAIN_PER_NODE = 6  # latest articles shown under each division / tier
+
+
+def build_graph_from_brain() -> Dict[str, Any]:
+    """Visualizer graph of the knowledge base, in the same format as a case graph.
+
+    DISCOVERY = your fields of study (one node per division, amber until something in it
+    is learned), REASONING = what grew beyond them (vital articles, depth 1-2, topics you
+    asked about), VERIFICATION = your investigation cases, SYNTHESIS = the brain summary.
+    Articles filed under two divisions are cross-linked. Queries are bounded (a few rows per
+    node), so this stays fast on a multi-GB brain."""
+    from openatlas.kb import ingest, store, taxonomy
+
+    seeds = taxonomy.parse()
+    divisions = taxonomy.divisions(seeds)  # name -> number of seed topics
+    nodes: List[Dict[str, Any]] = []
+    edges: List[Dict[str, Any]] = []
+    events: List[Dict[str, Any]] = []
+    prog = ingest.progress()
+    nodes.append({"id": "target", "kind": "target", "cluster": "DISCOVERY", "status": "ok",
+                  "label": _short(f"brain: {prog['articles']:,} articles")})
+
+    owners: Dict[str, List[str]] = {}  # article key -> finding node ids (cross-division links)
+
+    def _latest(con: Any, tag: str, where: str = "d.source='wikipedia'") -> List[Any]:
+        return con.execute(
+            f"SELECT d.key, d.title, d.url FROM doc_tags t JOIN documents d ON d.id=t.doc_id "
+            f"WHERE t.tag=? AND {where} ORDER BY d.id DESC LIMIT ?", (tag, _BRAIN_PER_NODE)
+        ).fetchall()
+
+    def _group(con: Any, gid: str, cluster: str, label: str, tag: str, learned: int,
+               where: str = "d.source='wikipedia'") -> None:
+        nodes.append({"id": gid, "kind": "function", "cluster": cluster, "label": _short(label, 48),
+                      "status": "ok" if learned else "degraded",
+                      "detail": f"{learned:,} learned" if learned else "nothing learned yet"})
+        edges.append({"from": "target", "to": gid, "kind": "ran"})
+        edges.append({"from": gid, "to": "report", "kind": "feeds"})
+        for i, row in enumerate(_latest(con, tag, where) if learned else []):
+            fid = f"{gid}_f{i}"
+            nodes.append({"id": fid, "kind": "finding", "cluster": cluster, "parent": gid,
+                          "label": _short(row["title"], 48), "status": None,
+                          "detail": row["url"] or ""})
+            edges.append({"from": gid, "to": fid, "kind": "found"})
+            owners.setdefault(row["key"], []).append(fid)
+
+    with store.connect() as con:
+        counts = {r["tag"]: r["n"] for r in con.execute(
+            "SELECT t.tag, COUNT(*) n FROM doc_tags t GROUP BY t.tag")}
+        for i, (name, n_seeds) in enumerate(divisions.items()):
+            learned = counts.get(f"domain:{taxonomy.slugify(name)}", 0)
+            _group(con, f"div_{i}", "DISCOVERY", f"{name} {learned:,}/{n_seeds}",
+                   f"domain:{taxonomy.slugify(name)}", learned)
+            events.append({"tag": "RUN" if learned else "DEGRADED", "phase": 1,
+                           "msg": _short(f"{name}: {learned:,} learned of {n_seeds} fields", 90)})
+        for tag, label in (("tier:1", "Vital articles"), ("tier:2", "Depth 1 (categories)"),
+                           ("tier:3", "Depth 2 (subcategories)"), ("on-demand", "Asked about")):
+            if counts.get(tag):
+                _group(con, f"grow_{tag}", "REASONING", f"{label} {counts[tag]:,}", tag, counts[tag])
+                events.append({"tag": "RUN", "phase": 3,
+                               "msg": _short(f"{label}: {counts[tag]:,} articles", 90)})
+        n_cases = prog.get("cases", 0)
+        if n_cases:
+            nodes.append({"id": "cases", "kind": "function", "cluster": "VERIFICATION",
+                          "label": f"Your cases {n_cases}", "status": "ok"})
+            edges += [{"from": "target", "to": "cases", "kind": "ran"},
+                      {"from": "cases", "to": "report", "kind": "feeds"}]
+            for i, row in enumerate(con.execute(
+                    "SELECT title, url FROM documents WHERE source='case' ORDER BY id DESC LIMIT ?",
+                    (_BRAIN_PER_NODE,))):
+                nodes.append({"id": f"cases_f{i}", "kind": "finding", "cluster": "VERIFICATION",
+                              "parent": "cases", "label": _short(row["title"], 48),
+                              "status": "verified", "detail": row["url"] or ""})
+                edges.append({"from": "cases", "to": f"cases_f{i}", "kind": "found"})
+        for row in con.execute("SELECT title FROM documents WHERE source='wikipedia' "
+                               "ORDER BY id DESC LIMIT 12"):
+            events.append({"tag": "LEARNED", "phase": 4, "msg": _short(row["title"], 90)})
+
+    for key, fids in owners.items():  # one article, several divisions
+        for a, b in zip(fids, fids[1:]):
+            if a.split("_f")[0] != b.split("_f")[0]:
+                edges.append({"from": a, "to": b, "kind": "cross-link"})
+                events.append({"tag": "CROSS-LINK", "phase": PHASE_MATCH,
+                               "msg": _short(f"{key.removeprefix('wikipedia:')} spans divisions", 90)})
+    nodes.append({"id": "report", "kind": "report", "cluster": "SYNTHESIS", "status": "ok",
+                  "label": _short(f"brain {prog['percent']}% of plan · {prog['articles']:,} articles")})
+    events.append({"tag": "SYNTH", "phase": 5,
+                   "msg": f"{prog['articles']:,} articles, {prog['chunks']:,} passages, "
+                          f"{n_cases} case(s)"})
+    return {"meta": {"source": "OpenAtlas brain", "session_id": "brain",
+                     "target": "knowledge base", "created_at": None,
+                     "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+                     "ollama_host": Config.llm.host, "model": profiles.active().text_model},
+            "clusters": CLUSTERS, "nodes": nodes, "edges": edges, "events": events}

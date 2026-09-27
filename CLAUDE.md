@@ -39,6 +39,9 @@ must both pass (CI runs them).
   => robots-gated, data brokers skipped). Return `SourceResult`; set `ok=False` + `error`
   on network failure - never report "0 found" when nothing answered.
 - `openatlas/kb/` - the brain (SQLite FTS5 in `OPENATLAS_DATA_DIR/brain`).
+- `openatlas/utils/knowledge_graph.py` + `webserver/visualizer/atsmatrix.html` (ATSMATRIX fork) -
+  case graphs (`/viz/<case>`) and the brain graph (`/viz/brain`, `openatlas kb graph`). Feed the
+  visualizer new graph builders; don't change the visualizer file itself.
 - `openatlas/web/` - FastAPI + no-build SPA (`openatlas serve`, loopback only).
 - `openatlas/cli.py` - `investigate|run|catalog|serve|cases|kb|doctor`; `openatlas/catalog.py`
   gives every action a human title + kebab slug (no underscores in titles).

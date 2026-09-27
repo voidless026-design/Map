@@ -132,6 +132,7 @@ success on a failing check.
 | Evidence verifier | `openatlas/investigate/verify.py` | Findings get independent re-checks, not echoed claims. |
 | Local AI probe | `openatlas/llm/ollama_client.py` | Detects missing Ollama/GPU so LLM tools degrade instead of erroring. |
 | Brain store + search | `openatlas/kb/store.py`, `openatlas/kb/retrieve.py` | Skills that answer from the brain get cited, retrievable passages. |
+| Knowledge-graph visualizer | `openatlas/utils/knowledge_graph.py` (ATSMATRIX) | Shows a case's evidence or the brain's growth as a graph, so cross-links and gaps are visible instead of re-checked by hand. |
 | Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 
 ## Definition of done

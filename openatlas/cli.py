@@ -211,6 +211,15 @@ def cmd_kb(a: argparse.Namespace) -> int:
         store.set_meta("paused", op == "pause")
         print("paused" if op == "pause" else "resumed")
         return 0
+    if op == "graph":
+        from openatlas.utils import knowledge_graph
+
+        graph = knowledge_graph.build_graph_from_brain()
+        out = knowledge_graph.write_bundle(graph)
+        print(f"brain graph: {len(graph['nodes'])} nodes -> {out}")
+        if not a.no_serve:
+            knowledge_graph.serve(out, port=a.port)
+        return 0
     if op == "boost":
         print(f"queued {ingest.boost(a.topic)} task(s) for '{a.topic}'")
         return 0
@@ -292,6 +301,9 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("question")
     ks.add_parser("pause", help="pause ingestion")
     ks.add_parser("resume", help="resume ingestion")
+    x = ks.add_parser("graph", help="show the brain in the knowledge-graph visualizer")
+    x.add_argument("--port", type=int, default=8765)
+    x.add_argument("--no-serve", action="store_true", help="only write output/visualizer/")
     x = ks.add_parser("boost", help="learn this topic next")
     x.add_argument("topic")
     kb.set_defaults(func=cmd_kb)
