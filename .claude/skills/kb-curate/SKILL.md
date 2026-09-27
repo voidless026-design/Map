@@ -25,7 +25,7 @@ publicly visible - OpenAtlas policy forbids those.
 
 ## Steps
 
-1. Check size, tiers and free disk space with `openatlas kb stats`.
+1. Check size, tiers and free disk space with `openatlas kb stats`; `openatlas kb where` shows where it is stored and prints a ready-to-paste line for moving it to another drive.
 2. Queue a topic ahead of the rest with `openatlas kb boost`, or the whole taxonomy with `openatlas kb plan`.
 3. Ingest now (`openatlas kb ingest`) or leave the systemd unit / `openatlas kb daemon` to grow it politely in the background.
 4. Answer from the brain with `openatlas kb ask`; every sentence cites a stored article, its licence and why it matched. For much faster growth, add whole offline encyclopedias with the `kb-library` skill (`openatlas kb library`).
@@ -33,6 +33,7 @@ publicly visible - OpenAtlas policy forbids those.
 
 ```bash
 openatlas kb stats
+openatlas kb where
 openatlas kb seeds
 openatlas kb boost "Algebraic topology"
 openatlas kb ingest --max 25

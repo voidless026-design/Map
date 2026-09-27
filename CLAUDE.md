@@ -44,6 +44,8 @@ must both pass (CI runs them).
   - `library.py` handles Kiwix ZIM books: the OPDS catalog, Range-resume downloads, SHA-256 verification, duplicate/update rules, and libzim ingest.
     - `kiwix.py` runs kiwix-serve on loopback, proxied at `/kiwix`.
     - Only https `*.kiwix.org` URLs are accepted.
+    - Kiwix's `q=` search matches titles and descriptions only, never file names. Look up books by name through `find_books` / `resolve`, which page through the catalog and match file names locally.
+- User-facing commands in docs and skills have no `<placeholders>`: people paste them literally. Use real examples (`pause 1`). `openatlas kb where` prints ready-to-paste data-dir lines.
     - Tests use `library.TRANSPORT` = `httpx.MockTransport`, plus real ZIMs built with `libzim.writer`.
 - `openatlas/utils/knowledge_graph.py` + `webserver/visualizer/atsmatrix.html` (ATSMATRIX fork) -
   case graphs (`/viz/<case>`) and the brain graph (`/viz/brain`, `openatlas kb graph`). Feed the

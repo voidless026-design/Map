@@ -175,6 +175,8 @@ def cmd_kb(a: argparse.Namespace) -> int:
     from openatlas.kb import ingest, store, taxonomy
 
     op = a.kb_cmd
+    if op == "where":
+        return _kb_where()
     if op == "seeds":
         seeds = taxonomy.parse(a.file)
         for div, n in taxonomy.divisions(seeds).items():
@@ -262,15 +264,53 @@ def cmd_kb(a: argparse.Namespace) -> int:
     return 2
 
 
+def _size(n: int) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{max(1, round(n / 1e6))} MB"
+
+
+def _no_book(library: Any, row_id: int) -> int:
+    ids = ", ".join(f"{b['id']} ({b['filename']})" for b in library.rows()) or "none yet"
+    print(f"no book with id {row_id} - your books: {ids}")
+    return 1
+
+
+def _kb_where() -> int:
+    from openatlas.kb import store
+
+    w = store.where()
+    state = "" if w["writable"] else "  <- NOT WRITABLE"
+    print(f"data folder: {w['data_dir']}  ({w['free_gb']} GB free){state}")
+    print(f"  OPENATLAS_DATA_DIR is {'set to ' + w['env'] if w['env'] else 'not set (using the default)'}")
+    if not w["drives"]:
+        print("no extra drives mounted. Plug the drive in and open it once in Files "
+              "(that mounts it under /run/media), then run this again.")
+        return 0
+    print("drives you could use instead (copy ONE line into your terminal):")
+    for d in w["drives"]:
+        ok = "" if d["writable"] else "   (read-only for you - pick another)"
+        print(f"  {d['mount']}  {d['fstype']}  {d['free_gb']} GB free{ok}")
+        if d["writable"]:
+            print(f"    echo \"{d['export']}\" >> ~/.bashrc && source ~/.bashrc")
+    return 0
+
+
 def _kb_library(a: argparse.Namespace) -> int:
     """Kiwix library: offline encyclopedias for the brain (multi-GB, verified, no duplicates)."""
     from openatlas.kb import kiwix, library, store
 
     op = a.lib_cmd
     if op == "catalog":
-        for b in library.catalog(a.query or "", a.lang):
+        books, total = library.find_books(a.query or "", a.lang, a.max)
+        for b in library.annotate(books):
             tag = {"have": "✓ have", "update": "↑ update", "new": ""}.get(b["status"], "")
-            print(f"{b['size'] / 1e9:7.1f} GB  {b['filename']:<48} {tag}")
+            print(f"{_size(b['size']):>9}  {b['filename']:<48} {tag}")
+        if not books:
+            print("nothing found - try a single word such as: wikipedia, wiktionary, gutenberg")
+        elif total > len(books):
+            print(f"showing {len(books)} of {total}+ - add words or a name to narrow it, "
+                  "e.g. openatlas kb library catalog wikipedia_en_all")
+        else:
+            print(f"{total} book(s). Download one with: openatlas kb library get {books[0]['book']}")
         return 0
     if op == "list":
         s = library.summary()
@@ -280,18 +320,21 @@ def _kb_library(a: argparse.Namespace) -> int:
                   f"download {b['percent']}%  brain {b['ingest_percent']}%  {b['note'] or ''}")
         return 0
     if op == "get":
-        match = [b for b in library.fetch_catalog(a.name, a.lang, 60)
-                 if a.name in (b["filename"], b["book"], b["name"], b["uuid"])]
-        if not match:
-            print(f"nothing in the Kiwix catalog matches '{a.name}' (try: openatlas kb library catalog {a.name})")
+        try:
+            book = library.resolve(a.name, a.lang)  # newest version of exactly that book
+        except library.NotFound as exc:
+            print(exc)
+            for c in exc.choices[:30]:
+                print(f"  openatlas kb library get {c}")
+            if not exc.choices:
+                print("see what exists with: openatlas kb library catalog wikipedia")
             return 1
-        book = sorted(match, key=lambda b: b["version"])[-1]  # newest version
         try:
             row_id = library.enqueue(book)
         except library.Duplicate as exc:
             print(f"not downloading: {exc}")
             return 0
-        print(f"downloading {book['filename']} ({book['size'] / 1e9:.1f} GB) - Ctrl+C pauses, run again to resume")
+        print(f"downloading {book['filename']} ({_size(book['size'])}) - Ctrl+C pauses, run again to resume")
         try:
             status = library.download(row_id)
         except KeyboardInterrupt:
@@ -308,12 +351,20 @@ def _kb_library(a: argparse.Namespace) -> int:
         library.work()
         return 0
     if op in ("pause", "resume"):
+        if a.id is not None:
+            if library.get(a.id) is None:
+                return _no_book(library, a.id)
+            row = library.control(a.id, op)
+            print(f"[{a.id}] {row['filename']}: {row['status']}")
+            return 0
         store.set_meta("library_paused", op == "pause")
         if op == "resume":
             library.start_background()
-        print(f"library {op}d")
+        print(f"library downloads {op}d (all books)")
         return 0
     if op == "verify":
+        if library.get(a.id) is None:
+            return _no_book(library, a.id)
         r = library.verify(a.id)
         print(json.dumps(r, indent=2))
         return 0 if r.get("ok") else 1
@@ -416,18 +467,20 @@ def build_parser() -> argparse.ArgumentParser:
     x = ks.add_parser("library", help="Kiwix offline encyclopedias: catalog, download, feed the brain")
     ls = x.add_subparsers(dest="lib_cmd", required=True)
     y = ls.add_parser("catalog", help="search the official Kiwix catalog")
-    y.add_argument("query", nargs="?", default="")
-    y.add_argument("--lang", default="eng")
+    y.add_argument("query", nargs="?", default="", help="words, or a name like wikipedia_en_all")
+    y.add_argument("--lang", default="eng", help="eng, fra, deu ... or '' for all languages")
+    y.add_argument("--max", type=int, default=60, help="how many to show")
     ls.add_parser("list", help="books in your library, download and brain progress")
     y = ls.add_parser("get", help="download a book (resumable, checksum-verified, never twice)")
     y.add_argument("name", help="book or file name, e.g. wikipedia_en_all_nopic")
     y.add_argument("--lang", default="")
     y.add_argument("--no-ingest", action="store_true", help="download only")
     ls.add_parser("ingest", help="feed verified books into the brain (resumes)")
-    ls.add_parser("pause", help="pause downloads")
-    ls.add_parser("resume", help="resume downloads")
+    for verb in ("pause", "resume"):
+        y = ls.add_parser(verb, help=f"{verb} one book (id from 'list') or, without an id, all downloads")
+        y.add_argument("id", type=int, nargs="?")
     y = ls.add_parser("verify", help="re-check a file against its published SHA-256")
-    y.add_argument("id", type=int)
+    y.add_argument("id", type=int, help="the number in [brackets] from 'openatlas kb library list'")
     ls.add_parser("serve", help="read your books with Kiwix (kiwix-serve)")
     x = ks.add_parser("eval", help="measure search relevance (P@1, MRR, nDCG, off-topic rate)")
     x.add_argument("--fixture", action="store_true", help="use the built-in look-alike corpus")
@@ -438,6 +491,7 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--no-serve", action="store_true", help="only write output/visualizer/")
     x = ks.add_parser("boost", help="learn this topic next")
     x.add_argument("topic")
+    ks.add_parser("where", help="where the brain and books are stored, and drives you could move them to")
     kb.set_defaults(func=cmd_kb)
 
     d = sub.add_parser("doctor", help="automatically verify every tool the skills use")
@@ -448,8 +502,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
+    from openatlas.kb.store import DataDirError
+
     args = build_parser().parse_args(argv)
-    return int(args.func(args) or 0)
+    try:
+        return int(args.func(args) or 0)
+    except DataDirError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":  # pragma: no cover

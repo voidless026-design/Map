@@ -129,7 +129,8 @@ def test_parse_catalog():
 
 
 def test_catalog_marks_books_you_have(monkeypatch):
-    monkeypatch.setattr(library, "fetch_catalog", lambda *a, **k: library.parse_catalog(OPDS))
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(
+        lambda req: httpx.Response(200, content=OPDS.encode())))
     assert library.catalog()[0]["status"] == "new"
     library.enqueue(book("wikipedia_en_all_nopic_2026-01.zim"))
     library._set(1, status="ingested")
@@ -139,6 +140,129 @@ def test_catalog_marks_books_you_have(monkeypatch):
 
 
 # ------------------------------------------------------------------ downloads
+def _entry(i: int, filename: str, title: str = "Wikipedia", lang: str = "eng") -> str:
+    name, flavour, _ = filename.rsplit("_", 2)  # like Kiwix: name wikipedia_en_all + flavour nopic
+    return (f"<entry><id>urn:uuid:{i:08d}-0000-0000-0000-000000000000</id><title>{title}</title>"
+            f"<summary>Offline {title}</summary><language>{lang}</language><name>{name}</name>"
+            f"<flavour>{flavour}</flavour><updated>2026-01-01T00:00:00Z</updated>"
+            f'<link type="application/x-zim" href="{KIWIX}{filename}.meta4" length="{1000 + i}"/></entry>')
+
+
+class FakeCatalog:
+    """library.kiwix.org stand-in: like the real server, ``q`` only searches titles and
+    summaries (never file names) and results come in pages of ``count`` from ``start``."""
+
+    def __init__(self, entries):
+        self.entries, self.requests = list(enumerate(entries)), []
+
+    def __call__(self, req: httpx.Request) -> httpx.Response:
+        p = req.url.params
+        self.requests.append(dict(p))
+        hits = [(i, e) for i, e in self.entries
+                if (not p.get("q") or p["q"].lower() in ("offline " + e[1]).lower())
+                and (not p.get("lang") or p["lang"] == e[2])]
+        start, count = int(p.get("start", 0)), int(p.get("count", 10))
+        body = "".join(_entry(i, *e) for i, e in hits[start:start + count])
+        return httpx.Response(200, content=f'<feed xmlns="http://www.w3.org/2005/Atom">{body}</feed>'.encode())
+
+
+def big_catalog():
+    """150 Wikipedia books; the full English ones only appear on the second page."""
+    filler = [(f"wikipedia_en_topic{i}_nopic_2026-07.zim", "Wikipedia", "eng") for i in range(120)]
+    wanted = [(f"wikipedia_en_all_{f}_{v}.zim", "Wikipedia", "eng")
+              for f in ("maxi", "nopic", "mini") for v in ("2026-03", "2026-06")]
+    french = [("wikipedia_fr_all_nopic_2026-06.zim", "Wikipédia", "fra")]
+    other = [(f"gutenberg_en_all_{i}_2026-01.zim", "Project Gutenberg", "eng") for i in range(23)]
+    return FakeCatalog([(fn, t, lg) for fn, t, lg in filler + wanted + french + other])
+
+
+def test_get_by_name_finds_the_newest_file_even_past_the_first_page(monkeypatch):
+    fake = big_catalog()
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(fake))
+    b = library.resolve("wikipedia_en_all_nopic")
+    assert b["filename"] == "wikipedia_en_all_nopic_2026-06.zim"
+    assert fake.requests[0]["q"] == "wikipedia" and fake.requests[0]["lang"] == "eng"
+    assert any(r["start"] != "0" for r in fake.requests)  # it paged
+    assert library.resolve("wikipedia_en_all_nopic_2026-03.zim")["version"] == "2026-03"
+    assert library.resolve("wikipedia_fr_all_nopic")["language"] == "fra"  # language from the name
+
+
+def test_get_with_an_ambiguous_or_unknown_name_says_what_to_pick(monkeypatch):
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(big_catalog()))
+    with pytest.raises(library.NotFound) as exc:
+        library.resolve("wikipedia_en_all")
+    assert exc.value.choices == ["wikipedia_en_all_maxi", "wikipedia_en_all_mini", "wikipedia_en_all_nopic"]
+    with pytest.raises(library.NotFound) as exc:
+        library.resolve("wikipedia_en_nothing_like_this")
+    assert exc.value.choices == []
+
+
+def test_catalog_search_by_words_or_name(monkeypatch):
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(big_catalog()))
+    books, total = library.find_books("wikipedia", "eng", 40)
+    assert len(books) == 40 and total >= 40
+    books, total = library.find_books("wikipedia_en_all", "eng", 60)
+    assert total == 6 and {b["book"] for b in books} == {
+        "wikipedia_en_all_maxi", "wikipedia_en_all_mini", "wikipedia_en_all_nopic"}
+
+
+def test_cli_get_and_catalog_by_name(monkeypatch, capsys):
+    from openatlas import cli
+
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(big_catalog()))
+    monkeypatch.setattr(library, "enqueue", lambda b: (_ for _ in ()).throw(library.Duplicate("already have it")))
+    assert cli.main(["kb", "library", "get", "wikipedia_en_all_nopic"]) == 0
+    assert "already have it" in capsys.readouterr().out
+    assert cli.main(["kb", "library", "get", "wikipedia_en_all"]) == 1
+    out = capsys.readouterr().out
+    assert "openatlas kb library get wikipedia_en_all_nopic" in out
+    assert cli.main(["kb", "library", "catalog", "wikipedia_en_all"]) == 0
+    out = capsys.readouterr().out
+    assert "wikipedia_en_all_nopic_2026-06.zim" in out and "MB" in out and "0.0 GB" not in out
+
+
+def test_cli_pause_resume_take_an_optional_id(capsys):
+    from openatlas import cli
+
+    rid = library.enqueue(book("wikipedia_en_x_2026-01.zim"))
+    assert cli.main(["kb", "library", "pause", str(rid)]) == 0
+    assert library.get(rid)["status"] == "paused"
+    assert cli.main(["kb", "library", "pause"]) == 0 and store.get_meta("library_paused")
+    assert cli.main(["kb", "library", "verify", "99"]) == 1
+    assert "no book with id 99" in capsys.readouterr().out
+
+
+def test_unwritable_data_dir_gives_a_clear_message(monkeypatch, tmp_path, capsys):
+    from openatlas import cli
+    from openatlas.config import Config
+
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x")  # a file where the folder should be: mkdir fails like an unmounted drive
+    monkeypatch.setattr(Config.files, "brain_dir", blocker / "brain")
+    monkeypatch.setenv("OPENATLAS_DATA_DIR", str(blocker))
+    store.reset_init_cache()
+    assert cli.main(["kb", "library", "list"]) == 2
+    err = capsys.readouterr().err
+    assert f"OPENATLAS_DATA_DIR={blocker}" in err and "openatlas kb where" in err
+
+
+def test_where_lists_mounted_drives_with_a_ready_line(monkeypatch, tmp_path):
+    from collections import namedtuple
+
+    import psutil
+
+    Part = namedtuple("Part", "device mountpoint fstype opts")
+    parts = [Part("/dev/sdb1", "/run/media/me/BigHDD", "ext4", "rw"),
+             Part("/dev/loop0", "/run/media/me/cdrom", "iso9660", "ro"),
+             Part("/dev/sda1", "/", "btrfs", "rw")]
+    monkeypatch.setattr(psutil, "disk_partitions", lambda all=False: parts)
+    monkeypatch.setattr("shutil.disk_usage", lambda p: type("U", (), {"free": 500e9})())
+    monkeypatch.setattr("os.access", lambda p, m: True)
+    w = store.where()
+    assert [d["mount"] for d in w["drives"]] == ["/run/media/me/BigHDD"]
+    assert w["drives"][0]["export"] == "export OPENATLAS_DATA_DIR='/run/media/me/BigHDD/openatlas'"
+
+
 def test_download_verifies_checksum(monkeypatch):
     data = make_zim(Path(store.db_path()).parent / "src.zim", {"World War II": LONG}).read_bytes()
     serve(monkeypatch, {"wikipedia_en_test_2026-01.zim": data})

@@ -265,7 +265,24 @@ def check_library() -> Tuple[str, str]:
     sha = hashlib.sha256(data).hexdigest()
     base = "https://download.kiwix.org/zim/wikipedia/"
 
+    # a catalog like library.kiwix.org: the word search never matches file names, and the book
+    # wanted sits on the second page - finding it by name must still work
+    files = [f"wikipedia_en_topic{i}_nopic_2026-07.zim" for i in range(105)] + \
+            ["wikipedia_en_all_nopic_2026-03.zim", "wikipedia_en_all_nopic_2026-06.zim",
+             "wikipedia_en_all_maxi_2026-06.zim"]
+
+    def opds(req: httpx.Request) -> httpx.Response:
+        p = req.url.params
+        hits = files if p.get("q", "wikipedia") == "wikipedia" else []
+        start, count = int(p.get("start", 0)), int(p.get("count", 10))
+        body = "".join(f'<entry><id>urn:uuid:{fn}</id><title>Wikipedia</title><language>eng</language>'
+                       f'<link type="application/x-zim" href="{base}{fn}.meta4" length="1"/></entry>'
+                       for fn in hits[start:start + count])
+        return httpx.Response(200, content=f'<feed xmlns="http://www.w3.org/2005/Atom">{body}</feed>'.encode())
+
     def handler(req: httpx.Request) -> httpx.Response:
+        if str(req.url).startswith(library.CATALOG):
+            return opds(req)
         name = str(req.url).rsplit("/", 1)[-1]
         if name.endswith(".meta4"):
             good = "bad" not in name
@@ -297,10 +314,17 @@ def check_library() -> Tuple[str, str]:
             update_ok = library.check_duplicate(entry("wikipedia_en_x_2026-05.zim")) == rid
             bad = library.enqueue(entry("wikipedia_en_bad_2026-01.zim"))
             corrupt_rejected = library.download(bad) == "failed"
+            by_name = library.resolve("wikipedia_en_all_nopic")["filename"] == "wikipedia_en_all_nopic_2026-06.zim"
+            try:
+                library.resolve("wikipedia_en_all")
+                ambiguous_listed = False
+            except library.NotFound as exc:
+                ambiguous_listed = len(exc.choices) == 2
     finally:
         library.TRANSPORT = saved
     checks = {"resume gives the verified file": resumed, "duplicate refused": dup_refused,
-              "newer version = update": update_ok, "corrupt download rejected": corrupt_rejected}
+              "newer version = update": update_ok, "corrupt download rejected": corrupt_rejected,
+              "book found by name past page 1": by_name, "ambiguous name lists choices": ambiguous_listed}
     failed = [k for k, v in checks.items() if not v]
     if failed:
         return _fail("; ".join(failed) + " - FAILED")
@@ -309,7 +333,7 @@ def check_library() -> Tuple[str, str]:
         extras.append("feeding the brain needs: pip install libzim")
     if not kiwix.binary():
         extras.append("reading inside Atlas needs: sudo dnf install kiwix-tools")
-    detail = "resume + checksum + duplicate rules verified"
+    detail = "resume + checksum + duplicate rules + lookup by name verified"
     return ("warn", f"{detail}; {'; '.join(extras)}") if extras else _pass(detail)
 
 
