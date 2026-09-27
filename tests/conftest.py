@@ -37,8 +37,16 @@ def _no_network(monkeypatch):
     monkeypatch.setattr(net_client, "TRANSPORT", httpx.MockTransport(_refuse))
     real_send = httpx.Client.send
 
+    # In-process transports never touch the network: mocks, and the ASGI app transport
+    # that starlette's TestClient uses (not a MockTransport subclass since starlette 1.x).
+    try:
+        from starlette.testclient import _TestClientTransport
+    except ImportError:  # pragma: no cover - web extra not installed
+        _TestClientTransport = httpx.MockTransport
+    offline = (httpx.MockTransport, _TestClientTransport)
+
     def _sync_send(self, request, *a, **k):
-        if isinstance(getattr(self, "_transport", None), httpx.MockTransport):
+        if isinstance(getattr(self, "_transport", None), offline):
             return real_send(self, request, *a, **k)
         raise httpx.ConnectError("network disabled in tests", request=request)
 
