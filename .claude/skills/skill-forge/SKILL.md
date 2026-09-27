@@ -7,11 +7,12 @@ description: >-
   "create a skill for <task>", "turn this workflow into a skill", or "check that my
   skills still work". Engines get code + methods.yaml + registry hook + pytest, then a
   7-check verification (registered, spec, callable, documented, robots-gated, no
-  auth/secrets, mocked dry-run returns a valid ToolResult). Skills get a spec-valid
-  SKILL.md (trigger examples, steps, verification, tools), then an immediate lint that
-  runs every documented command. Both finish with `doctor`, which proves the verifying
-  tools themselves work on known-good/known-bad fixtures. Nothing is reported done while
-  a check fails. Free/local backends only - never a paid key.
+  auth/secrets, mocked dry-run returns a valid ToolResult). Skills are generated as a
+  draft, linted immediately (spec frontmatter, trigger examples, verification and tools
+  sections, every documented command run), and only promoted into .claude/skills once
+  they pass. Both finish with `doctor`, which proves the verifying tools themselves work
+  on known-good/known-bad fixtures. Nothing is reported done while a check fails.
+  Free/local backends only - never a paid key.
 license: MIT
 metadata:
   project: OpenAtlas
@@ -62,8 +63,9 @@ Then implement the body. Rules: return a `ToolResult`; use `openatlas.utils.http
 (`api_get_json` for APIs, `scrape_get` for pages - robots-gated); on an unreachable
 backend return `ToolResult.unavailable(...)`; never send `Authorization`/`Cookie`.
 
-**A skill** (writes `.claude/skills/<name>/SKILL.md` from the spec template and lints it
-immediately - generation and verification are one command):
+**A skill** (writes a draft to `.claude/skill-drafts/<name>/SKILL.md` from the spec
+template, lints it immediately, and promotes it to `.claude/skills/<name>/` only if it
+passes - generation and verification are one command, and an unverified skill is never live):
 
 ```bash
 python -m openatlas.utils.forge new-skill --name username-deep-dive \
@@ -75,7 +77,9 @@ python -m openatlas.utils.forge new-skill --name username-deep-dive \
   --tool "openatlas/investigate/verify.py - automatic re-checks"
 ```
 
-`osint-investigate` and `kb-curate` in this repo were generated exactly this way.
+`osint-investigate` and `kb-curate` in this repo were generated exactly this way. If the
+lint fails, fix the draft and run `python -m openatlas.utils.forge verify-skill <name>`;
+it is promoted as soon as it passes.
 
 ## Verification
 
@@ -102,10 +106,13 @@ python -m pytest -q
    paid-key literal.
 3. **Tool doctor** (`openatlas/skills/doctor.py`): each tool above is itself run against
    a known-good and a known-bad fixture - e.g. the secret lint must catch a planted
-   fake key, the schema validator must reject a broken `methods.yaml`, the robots guard
-   must block `/private`, the scaffolder does a full round-trip in a temp directory
-   (never touching the repo), and the evidence verifier must label confirmed / refuted /
-   unverified correctly. `doctor --live` also probes each public source once from your
+   fake key and then scan the installed package by absolute path (never your current
+   folder, never a virtualenv) and report how many files it checked, the schema validator
+   must reject a broken `methods.yaml`, the robots guard must block `/private`, the
+   scaffolder does a full round-trip in a temp directory (never touching the repo), the
+   evidence verifier must label confirmed / refuted / unverified correctly, and the brain
+   check stores a fixture article in a throwaway brain and must find it (and nothing for a
+   nonsense query) before sampling your real brain. `doctor --live` also probes each public source once from your
    network and reports which ones answer.
 
 Report the JSON/summary back. If any check fails, fix and re-run - never report
@@ -121,9 +128,10 @@ success on a failing check.
 | Skill linter | `openatlas/skills/linter.py` | Spec-valid frontmatter, required sections, and commands that actually run. |
 | robots.txt guard | `openatlas/utils/robots.py` | Scrapers stay robots-gated. |
 | Network policy | `openatlas/net/client.py` | Strips credentials, caps bodies, never fetches data-broker sites. |
-| Secret / paid-key lint | `openatlas/utils/secret_lint.py` | No hardcoded credential or paid-API-key literal gets in. |
+| Secret / paid-key lint | `openatlas/utils/secret_lint.py` | No hardcoded credential or paid-API-key literal gets in (intentional test fixtures carry `# secret-lint: ignore`). |
 | Evidence verifier | `openatlas/investigate/verify.py` | Findings get independent re-checks, not echoed claims. |
 | Local AI probe | `openatlas/llm/ollama_client.py` | Detects missing Ollama/GPU so LLM tools degrade instead of erroring. |
+| Brain store + search | `openatlas/kb/store.py`, `openatlas/kb/retrieve.py` | Skills that answer from the brain get cited, retrievable passages. |
 | Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 
 ## Definition of done

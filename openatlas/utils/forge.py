@@ -241,34 +241,59 @@ def cmd_verify(a: argparse.Namespace) -> int:
     return 0 if report["ok"] else 1
 
 
+def _promote(name: str) -> Path:
+    """Move a verified draft into ``.claude/skills`` (replacing an older live copy)."""
+    import shutil
+
+    from openatlas.skills import registry
+
+    src, dst = registry.drafts_dir() / name, registry.skills_dir() / name
+    if dst.exists():
+        shutil.rmtree(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(src), str(dst))
+    return dst / "SKILL.md"
+
+
 def cmd_new_skill(a: argparse.Namespace) -> int:
+    from openatlas.skills import linter, registry
+
+    if (registry.skills_dir() / a.name).exists() and not a.force:
+        print(f"refusing to overwrite live skill '{a.name}' (use --force)")
+        return 1
     try:
+        # Generate into the drafts folder first; it only goes live once it verifies.
         path = scaffold_skill(
             name=a.name, description=a.description, purpose=a.purpose or a.description,
             triggers=a.trigger, steps=a.step or ["Describe the steps."],
             verification=a.verify or ["Every output claim is re-checked against an independent source."],
             tools=a.tool or ["`openatlas/utils/smoke_run.py` - dry-run verification"],
-            commands=a.command, force=a.force)
+            commands=a.command, root=registry.drafts_dir(), force=True)
     except FileExistsError as exc:
         print(exc)
         return 1
-    print(f"wrote {path}")
+    print(f"wrote draft {path}")
     # Generate -> verify in one step: the new skill is linted immediately.
-    from openatlas.skills import linter
-
     r = linter.lint_skill(str(path.parent), run_commands=not a.no_commands)
     for e in r["errors"]:
         print(f"  ✗ {e}")
-    print("verified: ok" if r["ok"] else "verification FAILED - edit the SKILL.md and run "
-          f"`python -m openatlas.utils.forge verify-skill {a.name}`")
-    return 0 if r["ok"] else 1
+    if not r["ok"]:
+        print("verification FAILED - the skill stays a draft (not live). Edit "
+              f"{path} and run `python -m openatlas.utils.forge verify-skill {a.name}`")
+        return 1
+    print(f"verified: ok -> promoted to {_promote(a.name)}")
+    return 0
 
 
 def cmd_verify_skill(a: argparse.Namespace) -> int:
     from openatlas.skills import linter, registry
 
-    targets = [s["path"] for s in registry.list_skills()] if a.all or not a.name else \
-        [str(registry.skills_dir() / a.name)]
+    if a.all or not a.name:
+        targets = [s["path"] for s in registry.list_skills()]
+    elif (registry.drafts_dir() / a.name).exists():
+        targets = [str(registry.drafts_dir() / a.name)]  # a draft: promote it if it passes
+    else:
+        targets = [str(registry.skills_dir() / a.name)]
     ok = True
     for t in targets:
         r = linter.lint_skill(t, run_commands=not a.no_commands)
@@ -280,6 +305,8 @@ def cmd_verify_skill(a: argparse.Namespace) -> int:
             print(f"     ✗ {e}")
         for w in r["warnings"]:
             print(f"     ! {w}")
+        if r["ok"] and Path(t).parent == registry.drafts_dir():
+            print(f"     -> promoted to {_promote(Path(t).name)}")
     return 0 if ok else 1
 
 
