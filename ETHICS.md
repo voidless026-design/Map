@@ -26,6 +26,15 @@ These constraints are enforced in code, not just documented.
    lint (`openatlas/utils/secret_lint.py`) fails the build if a credential or paid-key
    literal is committed.
 
+8. **Every investigation has a stated purpose.** `openatlas investigate` and the GUI
+   refuse to start a case without one; it is stored with the case as an audit trail.
+9. **Data-broker / people-search sites are never fetched** (`DATA_BROKERS` in
+   `openatlas/net/client.py`): their terms forbid automated access and they sell personal
+   data. Search results may still link to them; OpenAtlas will not open them.
+10. **Findings are labelled, not asserted.** Every finding carries its source link and
+    is automatically re-checked (confirmed / refuted / unverified with a reason), so
+    unconfirmed claims are never presented as fact.
+
 ## Your responsibilities
 
 - Have a lawful basis and, where required, authorization for your investigation.
