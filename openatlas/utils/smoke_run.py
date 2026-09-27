@@ -88,10 +88,16 @@ _AUTH_HEADER_MARKERS = [
 ]
 
 
-def verify_function(function_name: str, *, run: bool = True) -> Dict[str, Any]:
-    """Verify a single function end-to-end. Returns a report dict."""
+def verify_function(function_name: str, *, run: bool = True,
+                    engine_name: Optional[str] = None) -> Dict[str, Any]:
+    """Verify a single function end-to-end. Returns a report dict.
+
+    ``engine_name`` disambiguates functions that share a name across engines
+    (e.g. Reddit's and GitHub's ``fetch_about``)."""
     load_all_engines()
     report: Dict[str, Any] = {"function": function_name, "checks": [], "ok": True}
+    if engine_name:
+        report["engine"] = engine_name
 
     def _check(name: str, ok: bool, detail: str = "") -> None:
         report["checks"].append({"check": name, "ok": bool(ok), "detail": detail})
@@ -99,7 +105,8 @@ def verify_function(function_name: str, *, run: bool = True) -> Dict[str, Any]:
             report["ok"] = False
 
     # 1. Registered & importable
-    engine = ToolRegistry.engine_for_function(function_name)
+    engine = (next((e for e in ToolRegistry.engines().values() if e.__name__ == engine_name), None)
+              if engine_name else ToolRegistry.engine_for_function(function_name))
     _check("registered", engine is not None, "" if engine else "not in ToolRegistry")
     if engine is None:
         return report
@@ -207,10 +214,12 @@ def verify_engine(common_name: str) -> Dict[str, Any]:
 def verify_all() -> Dict[str, Any]:
     """Verify every registered function. Returns an aggregate report."""
     load_all_engines()
-    reports = [verify_function(fn) for fn in sorted(ToolRegistry.all_functions())]
+    # Iterate engines x functions so same-named functions in different engines are all checked.
+    reports = [verify_function(fn, engine_name=engine.__name__)
+               for engine in ToolRegistry.engines().values() for fn in engine.function_names()]
     return {
         "ok": all(r["ok"] for r in reports),
         "total": len(reports),
-        "failed": [r["function"] for r in reports if not r["ok"]],
+        "failed": [f"{r.get('engine')}.{r['function']}" for r in reports if not r["ok"]],
         "functions": reports,
     }

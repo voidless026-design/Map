@@ -267,3 +267,61 @@ def serve(directory: Path, port: int = 8765, open_browser: bool = True) -> None:
             httpd.serve_forever()
         except KeyboardInterrupt:
             print("\nstopped.")
+
+
+# --------------------------------------------------------------------------- #
+# v2 cases -> graph (investigation evidence, with verification status)
+# --------------------------------------------------------------------------- #
+_CASE_CLUSTER = {"page-reader": "REASONING", "breaches": "VERIFICATION"}
+_STATUS = {"confirmed": "verified", "refuted": "failed", "unverified": None}
+
+
+def build_graph_from_case(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Visualizer graph for a v2 investigation case report."""
+    t = report.get("target", {})
+    nodes: List[Dict[str, Any]] = [{"id": "target", "kind": "target", "cluster": "DISCOVERY",
+                                    "label": _short(f"target: {t.get('value')}"), "status": "ok"}]
+    edges: List[Dict[str, Any]] = []
+    events: List[Dict[str, Any]] = []
+    by_source: Dict[str, List[Dict[str, Any]]] = {}
+    for ev in report.get("evidence", []):
+        by_source.setdefault(ev["source"], []).append(ev)
+    searched = {r["source"]: r for r in report.get("searched", [])}
+    for src in sorted(set(by_source) | set(searched)):
+        cluster = _CASE_CLUSTER.get(src, "DISCOVERY")
+        res = searched.get(src, {"ok": True, "found": len(by_source.get(src, []))})
+        sid = f"src_{src}"
+        nodes.append({"id": sid, "kind": "function", "cluster": cluster, "label": src,
+                      "status": "ok" if res.get("ok") else "failed",
+                      "detail": _short(res.get("error") or res.get("searched") or "", 160)})
+        edges.append({"from": "target", "to": sid, "kind": "ran"})
+        edges.append({"from": sid, "to": "report", "kind": "feeds"})
+        events.append({"tag": "RUN" if res.get("ok") else "FAILED",
+                       "msg": _short(f"{src}: {res.get('found', 0)} finding(s)", 90),
+                       "phase": PHASE_FOR_CLUSTER[cluster]})
+        for i, ev in enumerate(by_source.get(src, [])[:12]):
+            fid = f"{sid}_f{i}"
+            nodes.append({"id": fid, "kind": "finding", "cluster": cluster, "parent": sid,
+                          "label": _short(ev["title"], 48), "status": _STATUS.get(ev.get("status")),
+                          "detail": _short(ev.get("snippet", ""), 160)})
+            edges.append({"from": sid, "to": fid, "kind": "found"})
+            if ev.get("status") == "confirmed":
+                events.append({"tag": "VERIFY", "msg": _short(ev["title"], 90), "phase": 4})
+    for ent in report.get("entities", []):
+        if len(ent.get("sources", [])) >= 2:
+            owners = [n["id"] for n in nodes if n["kind"] == "finding" and
+                      n["parent"].removeprefix("src_") in ent["sources"]]
+            for a, b in zip(owners, owners[1:]):
+                if a.split("_f")[0] != b.split("_f")[0]:
+                    edges.append({"from": a, "to": b, "kind": "cross-link"})
+            events.append({"tag": "CROSS-LINK", "msg": _short(f"{ent['value']} x{len(ent['sources'])}", 90),
+                           "phase": PHASE_MATCH})
+    s = report.get("summary", {})
+    nodes.append({"id": "report", "kind": "report", "cluster": "SYNTHESIS",
+                  "label": f"report: {s.get('confirmed', 0)} confirmed / {s.get('findings', 0)}",
+                  "status": "ok"})
+    events.append({"tag": "SYNTH", "msg": f"case {report.get('case_id')} assembled", "phase": 5})
+    return {"meta": {"source": "OpenAtlas case", "session_id": report.get("case_id"),
+                     "target": t.get("value"), "ollama_host": Config.llm.host,
+                     "model": profiles.active().text_model},
+            "clusters": CLUSTERS, "nodes": nodes, "edges": edges, "events": events}

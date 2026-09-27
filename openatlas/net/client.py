@@ -85,7 +85,9 @@ class Net:
     """Use as ``async with Net() as net: r = await net.get(url)``."""
 
     def __init__(self, *, concurrency: Optional[int] = None, per_host: Optional[int] = None,
-                 timeout: float = 10.0, max_bytes: int = DEFAULT_MAX_BYTES):
+                 timeout: float = 10.0, max_bytes: int = DEFAULT_MAX_BYTES,
+                 transport: Optional[httpx.AsyncBaseTransport] = None,
+                 robots_check: Optional[Any] = None):
         prof = profiles.active()
         self.concurrency = concurrency or prof.net_concurrency
         self.per_host = per_host or prof.per_host
@@ -96,6 +98,8 @@ class Net:
         self._client: Optional[httpx.AsyncClient] = None
         self.in_flight = 0
         self.peak_in_flight = 0
+        self._transport = transport  # per-instance override (self-tests); else module TRANSPORT
+        self._robots_check = robots_check  # per-instance robots override (self-tests)
 
     async def __aenter__(self) -> "Net":
         self._client = httpx.AsyncClient(
@@ -104,7 +108,7 @@ class Net:
             timeout=self.timeout,
             limits=httpx.Limits(max_connections=self.concurrency,
                                 max_keepalive_connections=self.concurrency),
-            transport=TRANSPORT,
+            transport=self._transport or TRANSPORT,
         )
         return self
 
@@ -130,7 +134,8 @@ class Net:
                 return _failed(url, "data-broker site - not fetched by policy")
             from openatlas.utils.robots import can_fetch
 
-            if not await asyncio.to_thread(can_fetch, url):
+            check = self._robots_check or can_fetch
+            if not await asyncio.to_thread(check, url):
                 return _failed(url, "robots.txt disallows this URL")
         # Never forward credentials, whatever the caller passed.
         safe_headers = {k: v for k, v in (headers or {}).items()
