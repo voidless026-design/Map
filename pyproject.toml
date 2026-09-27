@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "openatlas"
-version = "0.1.0"
+version = "0.2.0"
 description = "OpenAtlas - a fully free / open-source / local OSINT investigation toolkit. A key-free reimplementation of the OAtlas AA (Aggregate & Analyze) workflow: 40+ OSINT functions across social media, email/identity, geolocation, image & binary analysis, web/domain, code/secrets, breach and network reconnaissance - every paid API replaced by a free, no-key, or local substitute (Ollama, DuckDuckGo, WhatsMyName, Holehe, keyless breach APIs, local HF models)."
 authors = ["voidless026-design <voidless026@gmail.com>"]
 license = "MIT"

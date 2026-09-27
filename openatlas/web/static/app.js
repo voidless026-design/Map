@@ -136,7 +136,8 @@ function renderTiles() {
       onclick: () => toggle(a) },
       h("div", { class: "t" }, a.title), h("div", { class: "d" }, a.description),
       h("div", { class: "meta" }, h("span", {}, a.kind === "source" ? "evidence" : "tool"),
-        ...a.inputs.slice(0, 3).map((i) => h("span", {}, TYPE_LABEL[i] || i)))));
+        ...a.inputs.slice(0, 2).map((i) => h("span", {}, TYPE_LABEL[i] || i)),
+        a.inputs.length > 2 ? h("span", { title: a.inputs.slice(2).map((i) => TYPE_LABEL[i] || i).join(", ") }, "+" + (a.inputs.length - 2)) : null)));
   }
   if (!list.length) box.append(h("div", { class: "empty" }, "No actions in this filter."));
 }
@@ -242,13 +243,14 @@ function paintHead(v, status) {
     h("div", { class: "count un" }, h("b", {}, c.unverified), h("span", { class: "label" }, "Unverified")),
     h("div", { class: "count bad" }, h("b", {}, c.refuted), h("span", { class: "label" }, "Refuted")));
   const done = status === "done";
-  v.head.replaceChildren(
+  v.head.replaceChildren(...[
     h("div", {}, h("div", { class: "label" }, "Case " + v.caseId + " · " + (done ? "complete" : status)),
       h("div", { style: "font-size:18px;font-weight:600;margin-top:6px" }, v.target || "")),
     h("div", { style: "flex:1" }), v.counts,
     done ? h("a", { class: "btn ghost", href: `/viz/${v.caseId}`, target: "_blank", rel: "noopener" }, "Graph ↗") : null,
     done ? h("a", { class: "btn ghost", href: `/api/cases/${v.caseId}/markdown`, target: "_blank", rel: "noopener" }, "Report .md") : null,
-    !done && status !== "failed" ? h("button", { class: "btn ghost", onclick: () => api(`/api/cases/${v.caseId}/cancel`, { method: "POST" }) }, "Stop") : null);
+    !done && status !== "failed" ? h("button", { class: "btn ghost", onclick: () => api(`/api/cases/${v.caseId}/cancel`, { method: "POST" }) }, "Stop") : null,
+  ].filter(Boolean)); // native replaceChildren would print null as text
   v.filt.replaceChildren(...["all", "confirmed", "unverified", "refuted"].map((s) =>
     h("button", { class: "chip" + (v.show === s ? " on" : ""), onclick: () => { v.show = s; paintHead(v, status); paintCards(v); } },
       s === "all" ? `All ${v.evidence.length}` : s)));

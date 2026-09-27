@@ -42,7 +42,7 @@ TOOL_TITLES: Dict[Tuple[str, str], Tuple[str, str, str, str, str]] = {
     ("IPinfoEngine", "core_api_lookups_asn"): ("asn-lookup", "Autonomous system (ASN) details", "network", "text", "asn_number"),
     ("PerplexityEngine", "search_perplexity_text"): ("web-summary", "Web search with summary", "web", "text", "search_request"),
     ("PerplexityEngine", "search_perplexity_images"): ("image-search", "Image search", "images", "text", "search_request"),
-    ("UsernameCheckEngine", "check_usernames"): ("username-sweep", "Username across 700+ sites", "username", "username", "username"),
+    ("UsernameCheckEngine", "check_usernames"): ("username-sweep", "Username sweep (raw site list)", "username", "username", "username"),
     ("GitHubEngine", "fetch_about"): ("github-profile", "GitHub profile", "code", "username", "username"),
     ("GitHubEngine", "fetch_repos"): ("github-repos", "GitHub repositories", "code", "username", "username"),
     ("GitHubEngine", "get_repo_secrets"): ("repo-secrets", "Leaked secrets in public repos", "code", "url", "repository_names"),

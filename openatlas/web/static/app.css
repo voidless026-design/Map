@@ -112,7 +112,7 @@ button, input, textarea { font: inherit; color: inherit; }
 .tile:hover { background: var(--panel-2); }
 .tile .t { font: 600 14px/1.25 var(--sans); }
 .tile .d { font-size: 12.5px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.tile .meta { margin-top: auto; display: flex; gap: 6px; }
+.tile .meta { margin-top: auto; display: flex; gap: 6px; overflow: hidden; }
 .tile .meta span { font: 600 9.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--dim);
   border: 1px solid var(--line-2); padding: 4px 5px; border-radius: var(--r); }
 .tile.off { opacity: .38; }
