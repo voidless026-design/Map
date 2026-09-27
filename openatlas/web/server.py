@@ -121,6 +121,14 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
+    @app.get("/viz/brain", response_class=HTMLResponse)
+    async def viz_brain() -> HTMLResponse:
+        """The knowledge base in the ATSMATRIX visualizer - reload to watch it grow."""
+        from openatlas.utils import knowledge_graph
+
+        graph = await asyncio.to_thread(knowledge_graph.build_graph_from_brain)
+        return HTMLResponse(knowledge_graph.inline_html(graph))
+
     @app.get("/viz/{case_id}", response_class=HTMLResponse)
     async def viz(case_id: str) -> HTMLResponse:
         from openatlas.core.database import db_funcs

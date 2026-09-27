@@ -13,12 +13,18 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   ok((await p.textContent("#filters button.on")).startsWith("Username"), "Username filter auto-selected");
   ok((await p.textContent("#cmd")).includes("openatlas investigate jdoe_42 --filter username"), "command autofilled from filter: " + await p.textContent("#cmd"));
   ok(await p.isDisabled("#run"), "Run disabled until a purpose is chosen");
+  ok(/^Run all \d+ ▸$/.test(await p.textContent("#run")), "Run says how many sources it will use: " + await p.textContent("#run"));
+  ok((await p.$$(".tile.more")).length === 1 && !(await p.$$(".tile:has(.meta span:text-is('tool'))")).length,
+    "single-purpose tools folded under one 'More tools' tile");
+  ok(!(await p.textContent("#filters")).includes("Breach"), "filters with nothing for a username are hidden");
+  await p.screenshot({ path: out + "/1b-typed.png" });
 
   await p.click("#purposes button >> nth=0");
   await p.click(".tile:has-text('Keybase proofs')");
   await p.click(".tile:has-text('GitHub profiles')");
   const cmd = await p.textContent("#cmd");
   ok(/--sources keybase,github/.test(cmd) && cmd.includes("--purpose"), "tiles autofill --sources and --purpose: " + cmd);
+  ok((await p.textContent("#run")) === "Run 2 ▸", "Run counts the selected sources");
   const titles = await p.$$eval(".tile .t", (els) => els.map((e) => e.textContent));
   ok(titles.every((t) => !t.includes("_")), `no snake_case in ${titles.length} tile titles`);
   ok(new Set(titles).size === titles.length, "tile titles are unique");
@@ -35,6 +41,7 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   // a tool tile autofills `openatlas run`
   await p.click("#filters button:has-text('Domain')");
   await p.fill("#q", "example.com"); await p.waitForTimeout(400);
+  await p.click(".tile.more");
   const tool = await p.$(".tile:has(.meta span:text-is('tool'))"); await tool.click();
   ok((await p.textContent("#cmd")).startsWith("openatlas run "), "tool tile autofills `openatlas run`: " + await p.textContent("#cmd"));
 
@@ -43,6 +50,12 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
     await p.waitForTimeout(700); await p.screenshot({ path: `${out}/4-${v}.png` });
   }
   ok((await p.textContent("#cases-body")).includes("jdoe_42"), "case listed in Cases view");
+  await p.click("[data-view='brain']").catch(() => p.click("text=Brain")); await p.waitForTimeout(300);
+  const [viz] = await Promise.all([p.context().waitForEvent("page"), p.click("#brain-graph")]);
+  await viz.waitForLoadState(); await viz.waitForTimeout(1500);
+  const g = await viz.evaluate(() => window.ATLAS_GRAPH && { n: window.ATLAS_GRAPH.nodes.length, src: window.ATLAS_GRAPH.meta.source });
+  ok(g && g.src === "OpenAtlas brain" && g.n >= 15, "Brain graph opens the visualizer with the brain: " + JSON.stringify(g));
+  await viz.screenshot({ path: out + "/6-brain-graph.png" }); await viz.close();
   await p.emulateMedia({ colorScheme: "light" }); await p.click("#theme"); await p.waitForTimeout(200);
   await p.screenshot({ path: out + "/5-light.png" });
   const idle = await p.evaluate(async () => { let frames = 0; const t0 = performance.now();

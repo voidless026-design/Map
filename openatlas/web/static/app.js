@@ -9,7 +9,7 @@ const PURPOSES = ["Self-audit (my own footprint)", "Security research", "Due dil
 
 const state = {
   catalog: { filters: [], actions: [] }, filter: "", selected: [], detected: null,
-  forcedType: "", purpose: "", view: "investigate", activeCase: null, token: sessionStorage.getItem("oa-token") || "",
+  forcedType: "", purpose: "", showTools: false, view: "investigate", activeCase: null, token: sessionStorage.getItem("oa-token") || "",
 };
 
 // ------------------------------------------------------------------ helpers
@@ -121,6 +121,7 @@ function renderFilters() {
   const all = [{ id: "", label: "All" }, ...state.catalog.filters];
   for (const f of all) {
     const n = state.catalog.actions.filter((a) => (!f.id || a.filters.includes(f.id)) && applies(a, t)).length;
+    if (t && !n && f.id !== state.filter) continue; // nothing here for this kind of target
     box.append(h("button", { class: state.filter === f.id ? "on" : "", role: "tab",
       onclick: () => { state.filter = f.id; state.selected = []; renderAll(); } }, f.label, h("span", { class: "n" }, n)));
   }
@@ -129,15 +130,22 @@ function renderFilters() {
 function renderTiles() {
   const box = $("#tiles"); box.replaceChildren();
   const t = currentType();
-  const list = visibleActions().sort((a, b) => (applies(b, t) - applies(a, t)) || (a.kind === "source" ? -1 : 1));
-  for (const a of list) {
-    const on = state.selected.includes(a.slug);
-    box.append(h("button", { class: "tile" + (on ? " on" : "") + (applies(a, t) ? "" : " off"), title: a.description,
-      onclick: () => toggle(a) },
-      h("div", { class: "t" }, a.title), h("div", { class: "d" }, a.description),
-      h("div", { class: "meta" }, h("span", {}, a.kind === "source" ? "evidence" : "tool"),
-        ...a.inputs.slice(0, 2).map((i) => h("span", {}, TYPE_LABEL[i] || i)),
-        a.inputs.length > 2 ? h("span", { title: a.inputs.slice(2).map((i) => TYPE_LABEL[i] || i).join(", ") }, "+" + (a.inputs.length - 2)) : null)));
+  // Only what fits the target (a selected tile always stays visible).
+  const list = visibleActions().filter((a) => applies(a, t) || state.selected.includes(a.slug));
+  const tile = (a) => h("button", { class: "tile" + (state.selected.includes(a.slug) ? " on" : ""), title: a.description,
+    onclick: () => toggle(a) },
+    h("div", { class: "t" }, a.title), h("div", { class: "d" }, a.description),
+    h("div", { class: "meta" }, h("span", {}, a.kind === "source" ? "evidence" : "tool"),
+      ...a.inputs.slice(0, 2).map((i) => h("span", {}, TYPE_LABEL[i] || i)),
+      a.inputs.length > 2 ? h("span", { title: a.inputs.slice(2).map((i) => TYPE_LABEL[i] || i).join(", ") }, "+" + (a.inputs.length - 2)) : null));
+  const sources = list.filter((a) => a.kind === "source"), tools = list.filter((a) => a.kind === "tool");
+  sources.forEach((a) => box.append(tile(a)));
+  if (tools.length) { // the single-purpose tools stay one click away, folded by default
+    const open = state.showTools || tools.some((a) => state.selected.includes(a.slug));
+    box.append(h("button", { class: "tile more", onclick: () => { state.showTools = !open; renderTiles(); } },
+      h("div", { class: "t" }, open ? "Fewer tools ▴" : `More tools (${tools.length}) ▾`),
+      h("div", { class: "d" }, "Single-purpose tools from the original toolkit")));
+    if (open) tools.forEach((a) => box.append(tile(a)));
   }
   if (!list.length) box.append(h("div", { class: "empty" }, "No actions in this filter."));
 }
@@ -173,6 +181,11 @@ function renderCommand() {
   for (const [name, spec] of params)
     box.append(h("label", {}, h("span", { class: "label" }, name.replace(/_/g, " ") + (spec.required ? " *" : "")),
       h("input", { "data-param": name, placeholder: spec.description || "", "data-type": spec.type || "string" })));
+  // Say what Run will do: nothing selected = every recommended evidence source that fits.
+  const t = currentType();
+  const auto = state.catalog.actions.filter((a) => a.kind === "source" && a.default && applies(a, t) &&
+    (!state.filter || a.filters.includes(state.filter))).length;
+  $("#run").textContent = p.kind === "tool" ? "Run ▸" : p.sources.length ? `Run ${p.sources.length} ▸` : `Run all ${auto} ▸`;
   $("#run").disabled = !qEl.value.trim() || (p.kind === "investigate" && state.purpose.trim().length < 3);
   $("#run").title = $("#run").disabled ? (qEl.value.trim() ? "Pick or type a purpose first" : "Type a target first") : "";
 }
