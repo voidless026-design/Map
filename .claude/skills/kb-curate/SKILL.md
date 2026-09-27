@@ -28,7 +28,7 @@ publicly visible - OpenAtlas policy forbids those.
 1. Check size, tiers and free disk space with `openatlas kb stats`.
 2. Queue a topic ahead of the rest with `openatlas kb boost`, or the whole taxonomy with `openatlas kb plan`.
 3. Ingest now (`openatlas kb ingest`) or leave the systemd unit / `openatlas kb daemon` to grow it politely in the background.
-4. Answer from the brain with `openatlas kb ask`; every sentence cites a stored article and its licence.
+4. Answer from the brain with `openatlas kb ask`; every sentence cites a stored article, its licence and why it matched. For much faster growth, add whole offline encyclopedias with the `kb-library` skill (`openatlas kb library`).
 5. Show the user how the brain has grown with `openatlas kb graph` (or the GUI's *Brain graph* button): the ATSMATRIX visualizer draws each division filling in.
 
 ```bash
@@ -63,7 +63,8 @@ python -m openatlas.utils.forge doctor
 - `openatlas/kb/taxonomy.py` - parses `data/taxonomy/fields_of_study.md` into seeds
 - `openatlas/kb/wikipedia.py` - MediaWiki API client (maxlag, serial, Retry-After)
 - `openatlas/kb/ingest.py` - tiered queue, relevance filter, disk guard
-- `openatlas/kb/retrieve.py` - BM25 + optional vectors (RRF)
+- `openatlas/kb/retrieve.py` - search-engine style ranking: titles/aliases, term coverage, relevance gate, optional vectors
+- `openatlas/kb/evaluate.py` - `openatlas kb eval` checks that search stays on-topic (see the `search-quality` skill)
 - `openatlas/utils/knowledge_graph.py` + the ATSMATRIX visualizer - `build_graph_from_brain` draws the brain so growth can be checked at a glance
 - Local Ollama (optional) - `nomic-embed-text` for vectors and a small model for cited answers
 

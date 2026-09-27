@@ -20,6 +20,7 @@ from fastapi.responses import (
     HTMLResponse,
     JSONResponse,
     PlainTextResponse,
+    Response,
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
@@ -273,6 +274,73 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
             return {"case_id": cid}
         result = await asyncio.to_thread(_catalog.run_tool, action, body.value, body.args)
         return {"result": result}
+
+    # ---------------- Kiwix library ----------------
+    @app.get("/api/library")
+    async def library_state() -> Dict[str, Any]:
+        from openatlas.kb import kiwix, library
+
+        data = await asyncio.to_thread(library.summary)
+        return {**data, "kiwix": kiwix.status()}
+
+    @app.get("/api/library/catalog")
+    async def library_catalog(q: str = "", lang: str = "eng") -> List[Dict[str, Any]]:
+        from openatlas.kb import library
+
+        try:
+            return await asyncio.to_thread(library.catalog, q, lang, 40)
+        except Exception as exc:  # offline / catalog down: say so instead of a 500
+            raise HTTPException(502, f"Kiwix catalog unreachable: {type(exc).__name__}") from exc
+
+    @app.post("/api/library/get")
+    async def library_get(book: Dict[str, Any]) -> Dict[str, Any]:
+        from openatlas.kb import library
+
+        needed = {"filename", "url", "book", "version"}
+        if not needed <= set(book):
+            raise HTTPException(422, f"catalog entry must have {sorted(needed)}")
+        try:
+            row_id = await asyncio.to_thread(library.enqueue, book)
+        except library.Duplicate as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        library.start_background()
+        return {"id": row_id}
+
+    @app.post("/api/library/{row_id}/{action}")
+    async def library_control(row_id: int, action: str) -> Dict[str, Any]:
+        from openatlas.kb import kiwix, library
+
+        if action == "read":
+            ok = await asyncio.to_thread(kiwix.ensure)
+            return {"url": "/kiwix/" if ok else None, "hint": None if ok else kiwix.HINT}
+        if action not in ("pause", "resume", "cancel"):
+            raise HTTPException(404, "unknown action")
+        try:
+            return await asyncio.to_thread(library.control, row_id, action)
+        except KeyError as exc:
+            raise HTTPException(404, "no such book") from exc
+
+    @app.api_route("/kiwix/{path:path}", methods=["GET"])
+    async def kiwix_proxy(path: str, request: Request) -> Response:
+        """Kiwix's reader, served through Atlas (loopback only, same token guard)."""
+        import httpx
+
+        from openatlas.kb import kiwix
+
+        if not kiwix.running() and not await asyncio.to_thread(kiwix.ensure):
+            return PlainTextResponse(kiwix.HINT if not kiwix.binary() else
+                                     "No verified books yet - download one in the Library tab.",
+                                     status_code=503)
+        url = f"http://127.0.0.1:{kiwix.PORT}/kiwix/{path}"
+        async with httpx.AsyncClient(timeout=30) as c:
+            try:
+                r = await c.get(url, params=dict(request.query_params))
+            except httpx.HTTPError:
+                return PlainTextResponse("Kiwix reader is starting - reload in a moment.", 503)
+        return Response(r.content, status_code=r.status_code,
+                        media_type=r.headers.get("content-type"))
 
     # ---------------- brain ----------------
     @app.get("/api/brain")

@@ -134,6 +134,8 @@ async def process(task: Dict[str, Any], wiki: Wiki) -> str:
             return "skipped"
         store.upsert_document(key="wikipedia:" + art["title"], source="wikipedia", title=art["title"],
                               text=text, url=art["url"], revid=art["revid"], license=LICENSE, tags=tags)
+        if art["title"] != title:  # asked for a redirect ("WWII") -> remember it as an alias
+            store.add_aliases("wikipedia:" + art["title"], [title])
         mark(task["id"], "done", art["title"] if art["title"] != title else "")
         return "done"
     if kind == "vital-list":

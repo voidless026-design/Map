@@ -37,6 +37,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .
           pip install pytest ruff
+          pip install libzim   # real ZIM round-trips in tests/test_library.py
 
       - name: Lint (ruff)
         run: ruff check openatlas tests

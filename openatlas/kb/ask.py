@@ -40,4 +40,5 @@ def ask(question: str, k: int = 6) -> Dict[str, Any]:
 
 
 def _cite(h: Dict[str, Any]) -> Dict[str, Any]:
-    return {"title": h["title"], "url": h["url"], "license": h["license"], "source": h["source"]}
+    return {"title": h["title"], "url": h["url"], "license": h["license"], "source": h["source"],
+            "why": h.get("why", ""), "score": h.get("score")}

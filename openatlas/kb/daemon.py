@@ -21,6 +21,9 @@ async def loop(stop: threading.Event, batch: int = 25) -> None:
     from openatlas.runtime import profiles
 
     while not stop.is_set():
+        from openatlas.kb import library
+
+        library.start_background()  # downloads + ZIM ingestion run in their own thread
         await ingest.run(max_tasks=batch, stop=stop)
         if profiles.active().name != "lite" and not store.get_meta("paused", False):
             try:

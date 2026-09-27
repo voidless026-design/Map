@@ -15,6 +15,7 @@ venv/
 # Databases & runtime output
 data/openatlas.db
 data/brain/
+data/library/
 output/
 data/robots_cache/*
 !data/robots_cache/.gitkeep

@@ -72,6 +72,24 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
     await new Promise((r) => { const tick = () => { frames++; performance.now() - t0 < 2000 ? requestAnimationFrame(tick) : r(); }; requestAnimationFrame(tick); });
     return { anims: document.getAnimations().length, frames }; });
   ok(idle.anims === 0, "no running CSS animations when idle: " + JSON.stringify(idle));
+  // Brain: answers cite only on-topic articles and say why they matched
+  await p.click("[data-view='brain']"); await p.waitForTimeout(300);
+  await p.fill("#ask-q", "WWII"); await p.click("#ask-go");
+  await p.waitForSelector(".cites a", { timeout: 10000 });
+  const cites = await p.$$eval(".cites a", (as) => as.map((a) => a.textContent));
+  ok(cites.length === 1 && cites[0] === "World War II", "ask 'WWII' cites only World War II: " + JSON.stringify(cites));
+  ok((await p.textContent("#ask-out")).includes("matched: exact alias"), "citation says why it matched");
+  await p.screenshot({ path: out + "/8-ask.png" });
+
+  // Library (Kiwix): catalog -> download -> verified; the same book can't be downloaded twice
+  await p.click("[data-view='library']"); await p.waitForTimeout(300);
+  await p.click("#lib-go"); await p.waitForSelector("#lib-catalog .lib-row");
+  await p.click("#lib-catalog button:has-text('Download')");
+  await p.waitForFunction(() => /ingested/.test(document.querySelector("#lib-books").textContent), null, { timeout: 20000 });
+  ok((await p.textContent("#lib-books")).includes("verified"), "download finished, was checksum-verified and fed the brain");
+  await p.click("#lib-go"); await p.waitForSelector("#lib-catalog button:has-text('In library')");
+  ok(await p.isDisabled("#lib-catalog button:has-text('In library')"), "the same book can't be downloaded twice");
+  await p.screenshot({ path: out + "/9-library.png", fullPage: true });
   ok(errs.length === 0, "no JS errors " + JSON.stringify(errs));
   await b.close();
 })().catch((e) => { console.log("CRASH", e.message); process.exitCode = 1; });

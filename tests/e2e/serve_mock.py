@@ -1,5 +1,6 @@
 """Serve the real OpenAtlas app against a fake web, for the GUI e2e check (no network)."""
 
+import hashlib
 import sys
 
 import httpx
@@ -18,6 +19,70 @@ GITHUB = {"login": "jdoe_42", "name": "Jane Doe", "html_url": "https://github.co
           "created_at": "2019-01-01"}
 
 
+KIWIX = "https://download.kiwix.org/zim/wikipedia/"
+
+
+def build_zim() -> bytes:
+    """A real, tiny Wikipedia-style ZIM (needs ``pip install libzim``), padded to ~3 MB."""
+    import os
+    import tempfile
+
+    from libzim.writer import Creator, Hint, Item, StringProvider
+
+    class Page(Item):
+        def __init__(self, path, title, html):
+            super().__init__()
+            self.p, self.t, self.h = path, title, html
+
+        def get_path(self): return self.p
+        def get_title(self): return self.t
+        def get_mimetype(self): return "text/html"
+        def get_contentprovider(self): return StringProvider(self.h)
+        def get_hints(self): return {Hint.FRONT_ARTICLE: True}
+
+    filler = os.urandom(1_500_000).hex()  # incompressible, so the download takes a moment
+    fd, path = tempfile.mkstemp(suffix=".zim")
+    os.close(fd)
+    os.unlink(path)
+    with Creator(path).config_indexing(False, "eng") as c:
+        c.set_mainpath("Offline_reading")
+        c.add_item(Page("Offline_reading", "Offline reading",
+                        "<p>Offline reading lets you read web content without a connection. " * 20
+                        + "</p>"))
+        c.add_item(Page("Padding", "Padding", f"<p>{filler}</p>"))
+        for k, v in {"Title": "Wikipedia (test)", "Name": "wikipedia_en_test", "Language": "eng",
+                     "Creator": "t", "Publisher": "t", "Date": "2026-05-01", "Description": "t"}.items():
+            c.add_metadata(k, v)
+    with open(path, "rb") as fh:
+        data = fh.read()
+    os.unlink(path)
+    return data
+
+
+ZIM = build_zim()
+OPDS = f"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom"><entry>
+ <id>urn:uuid:aaaaaaaa-0000-0000-0000-000000000001</id><title>Wikipedia (test)</title>
+ <summary>Offline encyclopedia, no pictures</summary><language>eng</language>
+ <name>wikipedia_en_test</name><flavour>nopic</flavour><articleCount>1234</articleCount>
+ <updated>2026-05-01T00:00:00Z</updated>
+ <link type="application/x-zim" href="{KIWIX}wikipedia_en_test_nopic_2026-05.zim.meta4" length="{len(ZIM)}"/>
+</entry></feed>"""
+
+
+def kiwix(req: httpx.Request) -> httpx.Response:
+    url = str(req.url)
+    if url.startswith("https://library.kiwix.org/catalog/v2/entries"):
+        return httpx.Response(200, content=OPDS.encode())
+    if url.endswith(".meta4"):
+        xml = ('<metalink xmlns="urn:ietf:params:xml:ns:metalink"><file name="f"><hash type="sha-256">'
+               f'{hashlib.sha256(ZIM).hexdigest()}</hash><url>{url[:-6]}</url></file></metalink>')
+        return httpx.Response(200, content=xml.encode())
+    if url.endswith(".zim"):
+        return httpx.Response(200, content=ZIM)
+    return httpx.Response(404)
+
+
 def handler(req: httpx.Request) -> httpx.Response:
     url = str(req.url)
     if url.startswith("https://keybase.io/_/api/1.0/user/lookup.json"):
@@ -28,6 +93,10 @@ def handler(req: httpx.Request) -> httpx.Response:
 
 
 if __name__ == "__main__":
+    from openatlas.kb import evaluate, library
+
     net_client.TRANSPORT = httpx.MockTransport(handler)
+    library.TRANSPORT = httpx.MockTransport(kiwix)
+    evaluate.load_fixture_corpus()  # a small brain with look-alike articles
     robots._fetch_text = lambda *a, **k: None
     sys.exit(serve(port=8611, open_browser=False))

@@ -46,6 +46,11 @@ pytesseract = "*"
 # Free browser automation (replaces PyBA's OpenAI dependency; reasoning uses Ollama)
 playwright = "*"
 
+[tool.poetry.group.kiwix.dependencies]
+# Reads Kiwix ZIM files (offline Wikipedia etc.) so the brain can ingest them. Free, local.
+# The reader itself is Kiwix's kiwix-serve (Fedora: sudo dnf install kiwix-tools).
+libzim = "*"
+
 [tool.poetry.group.ml]
 optional = true
 
