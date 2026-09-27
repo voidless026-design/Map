@@ -132,8 +132,8 @@ def check_skill_linter() -> Tuple[str, str]:
 def check_evidence_verifier() -> Tuple[str, str]:
     """osint-verify engine: a live profile is confirmed, a 404 is refuted, a page lacking the
     username stays unverified."""
-    from openatlas.investigate.models import Evidence
     from openatlas.investigate.detect import detect
+    from openatlas.investigate.models import Evidence
     from openatlas.investigate.verify import recheck_account
     from openatlas.net.client import Net
 

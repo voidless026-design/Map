@@ -59,8 +59,9 @@ async def run_investigation(
     if persist:
         from openatlas.core.database import db_funcs
 
-        db_funcs.create_case(case_id, name=name, purpose=purpose, target=target.value,
-                             target_type=target.type)
+        # Off the event loop: a slow disk must not stall the GUI's live stream.
+        await asyncio.to_thread(db_funcs.create_case, case_id, name=name, purpose=purpose,
+                                target=target.value, target_type=target.type)
 
     emit({"type": "start", "case_id": case_id, "target": target.to_dict(),
           "sources": [s.to_dict() for s in specs]})
@@ -133,8 +134,8 @@ async def run_investigation(
     if persist:
         from openatlas.core.database import db_funcs
 
-        db_funcs.finish_case(case_id, report)
-        _to_brain(report)
+        await asyncio.to_thread(db_funcs.finish_case, case_id, report)
+        await asyncio.to_thread(_to_brain, report)
     emit({"type": "done", "case_id": case_id, "summary": report["summary"]})
     return report
 

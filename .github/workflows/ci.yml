@@ -39,7 +39,7 @@ jobs:
           pip install pytest ruff
 
       - name: Lint (ruff)
-        run: ruff check openatlas
+        run: ruff check openatlas tests
 
       - name: Secret / paid-key lint
         # Enforces the "no paid keys, no hardcoded secrets" project rule.
@@ -52,3 +52,9 @@ jobs:
         # import/registration + methods.yaml schema-lint + mocked dry-run +
         # public-only/robots + no-secrets guard for every registered function.
         run: python openatlas.py --verify
+
+      - name: Tool doctor (verifies the verifiers on known-good/known-bad fixtures)
+        run: python -m openatlas.utils.forge doctor
+
+      - name: Skill linter (every SKILL.md, every documented command must run)
+        run: python -m openatlas.utils.forge verify-skill --all

@@ -146,7 +146,13 @@ def reset_for_tests(url: str = "sqlite:///:memory:") -> None:  # pragma: no cove
     global _ENGINE, _SESSIONMAKER
     from sqlalchemy import create_engine
 
-    _ENGINE = create_engine(url, future=True)
+    kw = {}
+    if ":memory:" in url:
+        from sqlalchemy.pool import StaticPool
+
+        # One shared connection, so threads (asyncio.to_thread, the web server) see one DB.
+        kw = {"poolclass": StaticPool, "connect_args": {"check_same_thread": False}}
+    _ENGINE = create_engine(url, future=True, **kw)
     _SESSIONMAKER = sessionmaker(bind=_ENGINE, future=True)
     Base.metadata.create_all(_ENGINE)
 
