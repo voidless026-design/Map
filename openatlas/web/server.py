@@ -43,6 +43,12 @@ class InvestigateIn(BaseModel):
     name: str = ""
 
 
+class PlanIn(BaseModel):
+    target: str = Field(min_length=1, max_length=500)
+    purpose: str = ""
+    type: Optional[str] = None
+
+
 class RunIn(BaseModel):
     value: str = Field(min_length=1, max_length=2000)
     purpose: str = ""
@@ -189,6 +195,24 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
 
         tasks[case_id] = asyncio.create_task(job())
         return case_id
+
+    @app.post("/api/plan")
+    async def plan(body: PlanIn) -> Dict[str, Any]:
+        """ATLAS loop, step 1: propose sources for the target (a human then presses Run)."""
+        from openatlas.reasoning import loop
+
+        return await asyncio.to_thread(loop.plan_case, body.target, body.purpose, body.type or "")
+
+    @app.get("/api/cases/{case_id}/check")
+    async def check(case_id: str) -> Dict[str, Any]:
+        """ATLAS loop, check + repair: assess a finished case and propose one repair round."""
+        from openatlas.core.database import db_funcs
+        from openatlas.reasoning import loop
+
+        c = await asyncio.to_thread(db_funcs.get_case, case_id)
+        if not c or not c.get("report", {}).get("summary"):
+            raise HTTPException(404, "case not found or still running")
+        return await asyncio.to_thread(loop.check_case, c["report"])
 
     @app.post("/api/investigate")
     async def investigate(body: InvestigateIn) -> Dict[str, Any]:

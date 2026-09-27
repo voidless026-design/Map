@@ -26,13 +26,14 @@ publicly visible - OpenAtlas policy forbids those.
 ## Steps
 
 1. Ask for (or confirm) a one-line purpose; refuse targets that are private individuals without a legitimate purpose (see ETHICS.md).
-2. Preview which sources will run: `openatlas catalog --filter <filter>`.
+2. Preview which sources will run: `openatlas catalog --filter <filter>`, or let the ATLAS loop propose them with `openatlas plan` (the GUI's Auto-plan button); the user approves before anything runs.
 3. Run the case with `openatlas investigate` (add `--filter` or `--sources` to narrow it).
 4. Read the Markdown report; present confirmed findings first, then unverified, and list refuted ones as ruled out.
 5. Show the 'What was searched' section so failed or blocked sources are visible, never hidden.
 
 ```bash
 openatlas catalog --filter username
+openatlas plan "jdoe_42" --purpose "authorised background check"
 openatlas investigate "jdoe_42" --purpose "authorised background check" --filter username
 openatlas cases
 ```

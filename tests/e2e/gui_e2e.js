@@ -36,6 +36,8 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   const cards = await p.$$(".card"); ok(cards.length >= 3, `evidence cards rendered: ${cards.length}`);
   const links = await p.$$eval(".card a[href^='http']", (as) => as.map((a) => a.href)); ok(links.length >= 3, "cards carry source links");
   ok((await p.textContent("#results")).match(/confirmed/i), "verification badges shown");
+  await p.waitForSelector(".check", { timeout: 10000 });
+  ok((await p.textContent(".check")).includes("confirmed"), "ATLAS check row appears after the case: " + (await p.textContent(".check")).slice(0, 90));
   await p.screenshot({ path: out + "/3-results.png", fullPage: true });
 
   // a tool tile autofills `openatlas run`
@@ -44,6 +46,14 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   await p.click(".tile.more");
   const tool = await p.$(".tile:has(.meta span:text-is('tool'))"); await tool.click();
   ok((await p.textContent("#cmd")).startsWith("openatlas run "), "tool tile autofills `openatlas run`: " + await p.textContent("#cmd"));
+
+  // Auto-plan (ATLAS loop step 1): proposes sources, a human still presses Run
+  await p.click("#autoplan"); await p.waitForSelector("#plan-note:not(.hidden)");
+  const planned = await p.textContent("#cmd");
+  ok(/--sources [a-z-]+(,[a-z-]+)+/.test(planned) && planned.includes("rdap"), "Auto-plan selects domain sources: " + planned);
+  ok(/Auto-plan \((heuristic|local AI)\)/.test(await p.textContent("#plan-note")), "plan explains itself: " + await p.textContent("#plan-note"));
+  ok(/^Run \d+ ▸$/.test(await p.textContent("#run")), "Run shows the planned count: " + await p.textContent("#run"));
+  await p.screenshot({ path: out + "/7-autoplan.png" });
 
   for (const v of ["brain", "skills", "system", "cases"]) {
     await p.click(`[data-view='${v}']`).catch(() => p.click(`text=${v[0].toUpperCase() + v.slice(1)}`));

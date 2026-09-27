@@ -88,6 +88,10 @@ export OPENATLAS_SEARXNG_URL=http://127.0.0.1:8888
   - The command preview fills in as you click. **Run** streams evidence cards live.
   - Each card shows its badge, its "why", a confidence bar and its link.
   - "What was searched" lists every source, including the ones that failed.
+  - **Auto-plan** lets the ATLAS loop propose which sources to run (local AI, or a heuristic
+    when Ollama is off). It only selects the tiles; you review them and press Run.
+  - When a case finishes, a **Check** row assesses it and offers one repair round: retry the
+    sources that failed, or investigate a new identifier the case confirmed.
 - **Cases.** History, a Markdown report and a graph view (the ATSMATRIX visualizer).
 - **Brain.** One progress bar with start and pause, plus Ask, which answers with citations.
   **Brain graph ↗** opens your knowledge base in the ATSMATRIX visualizer: each of your 13
@@ -101,6 +105,7 @@ The GUI only listens on `127.0.0.1`. Binding any other host requires `OPENATLAS_
 
 ```bash
 openatlas catalog                                   # every action, grouped by filter
+openatlas plan "jdoe_42" --purpose "self-audit"      # Auto-plan: which sources to run (ATLAS loop)
 openatlas investigate "jdoe_42" --purpose "authorised background check" --filter username
 openatlas investigate jane@example.com --purpose "verify applicant (consented)" --json
 openatlas run rdap example.com                      # one action, exactly what a tile does
@@ -211,7 +216,7 @@ Where the integrated projects live:
 |---|---|
 | ATSMATRIX Agent VisualizeR (MIT) | `openatlas/webserver/visualizer/` - case graphs and the **Brain graph** |
 | OpenJarvis (Apache-2.0) | `openatlas/core/registry.py` - the tool registry every engine uses |
-| ATLAS (AGPL-3.0) | `openatlas/reasoning/loop.py` - plan → execute → check → repair (library module; the investigation pipeline follows the same idea) |
+| ATLAS (AGPL-3.0) | `openatlas/reasoning/loop.py` - plan → execute → check → repair: the **Auto-plan** button / `openatlas plan`, and the **Check** row after each case |
 
 It bundles a modified fork of the ATSMATRIX visualizer (MIT) and uses the WhatsMyName
 dataset, and optionally Holehe. Wikipedia text is CC BY-SA 4.0. See [NOTICE](NOTICE).

@@ -151,6 +151,7 @@ function renderTiles() {
 }
 
 function toggle(a) {
+  $("#plan-note").classList.add("hidden"); // a manual change replaces the auto-plan
   const sel = state.selected;
   if (sel.includes(a.slug)) state.selected = sel.filter((s) => s !== a.slug);
   else if (a.kind === "tool") state.selected = [a.slug];                          // tools run alone
@@ -191,6 +192,32 @@ function renderCommand() {
 }
 $("#copy").addEventListener("click", async () => { try { await navigator.clipboard.writeText($("#cmd").textContent); toast("Command copied"); } catch { toast("Copy failed"); } });
 $("#run").addEventListener("click", runSelected);
+
+// ------------------------------------------------------------------ ATLAS loop: plan -> (you) run -> check -> repair
+async function autoPlan() {
+  const value = qEl.value.trim(); if (!value) { toast("Type a target first"); return; }
+  const btn = $("#autoplan"); btn.disabled = true; btn.textContent = "Planning…";
+  try {
+    const p = await api("/api/plan", { method: "POST", body: JSON.stringify({ target: value, purpose: state.purpose.trim(), type: state.forcedType || null }) });
+    state.filter = ""; state.selected = p.steps; state.showTools = false; renderAll();
+    const note = $("#plan-note"); note.classList.remove("hidden");
+    note.textContent = `Auto-plan (${p.mode === "local-ai" ? "local AI" : "heuristic"}): ${p.steps.length} of ${p.available.length} sources — ${p.why}. Review the selection, then Run.`;
+  } catch (e) { toast(e.message); }
+  finally { btn.disabled = false; btn.textContent = "Auto-plan"; }
+}
+$("#autoplan").addEventListener("click", autoPlan);
+
+function showCheck(v, k) {
+  const retry = k.retry || [], pivots = k.pivots || [];
+  const box = h("div", { class: "check" },
+    h("span", { class: "label" }, "Check"), h("span", { class: "muted" }, k.assessment),
+    retry.length ? h("button", { class: "btn ghost", onclick: () => { state.filter = ""; state.selected = retry; renderAll(); runSelected(); } },
+      `Retry ${retry.length} failed ▸`) : null,
+    ...pivots.map((p) => h("button", { class: "btn ghost", title: `found by ${p.sources.join(", ")}`, onclick: () => {
+      qEl.value = p.value; state.selected = []; state.filter = ""; $("#plan-note").classList.add("hidden");
+      detectType(); window.scrollTo({ top: 0, behavior: "smooth" }); } }, `Investigate ${p.value} ▸`)));
+  v.root.insertBefore(box, v.filt);
+}
 
 function renderAll() { renderTypes(); renderPurposes(); renderFilters(); renderTiles(); renderCommand(); }
 
@@ -313,6 +340,7 @@ async function liveCase(caseId) {
   // Replace streamed evidence with the final, verified report.
   try { const c = await api(`/api/cases/${caseId}`); if (c.report && c.report.evidence) { v.evidence = c.report.evidence; v.stage.textContent = c.report.ai_summary ? "Local AI: " + c.report.ai_summary : ""; } } catch {}
   paintHead(v, "done"); paintCards(v); loadPills();
+  try { showCheck(v, await api(`/api/cases/${caseId}/check`)); } catch { /* case failed or was cancelled */ }
 }
 
 // ------------------------------------------------------------------ cases

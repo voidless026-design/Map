@@ -17,6 +17,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "commands (each has --help):\n"
             "  investigate \"<target>\" --purpose \"...\"   full evidence-based investigation\n"
+            "  plan \"<target>\"                         Auto-plan: which sources to run (ATLAS loop)\n"
             "  run <slug> <value>                       one action (what a GUI button does)\n"
             "  catalog                                  every action grouped by filter\n"
             "  serve                                    web GUI on http://127.0.0.1:8600\n"
