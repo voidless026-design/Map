@@ -104,6 +104,18 @@ def _isolated_robots_cache(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolated_brain(tmp_path, monkeypatch):
+    """Cases persisted by pipeline tests go to a temp brain, never the real data dir."""
+    from openatlas.config import Config
+    from openatlas.kb import store
+
+    monkeypatch.setattr(Config.files, "brain_dir", tmp_path / "brain")
+    store.reset_init_cache()
+    yield
+    store.reset_init_cache()
+
+
+@pytest.fixture(autouse=True)
 def _no_llm(monkeypatch):
     """Force the Ollama backend to appear unavailable unless a test opts in."""
     from openatlas.llm import ollama_client
