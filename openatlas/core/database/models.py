@@ -44,3 +44,38 @@ class FunctionRun(Base):
     function_output: Mapped[str] = mapped_column(Text, default="")
     success: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_utcnow)
+
+
+class Case(Base):
+    """An investigation (v2 pipeline): target, purpose, status and a JSON report."""
+
+    __tablename__ = "cases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    case_id: Mapped[str] = mapped_column(String(32), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="")
+    purpose: Mapped[str] = mapped_column(String(500), default="")
+    target: Mapped[str] = mapped_column(String(500), default="")
+    target_type: Mapped[str] = mapped_column(String(32), default="")
+    status: Mapped[str] = mapped_column(String(32), default="running")
+    report_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[_dt.datetime] = mapped_column(DateTime, default=_utcnow)
+    finished_at: Mapped[_dt.datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class CaseEvidence(Base):
+    """One piece of evidence in a case (denormalised for cross-case lookups)."""
+
+    __tablename__ = "case_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    case_id: Mapped[str] = mapped_column(String(32), index=True)
+    evidence_id: Mapped[str] = mapped_column(String(16), index=True)
+    source: Mapped[str] = mapped_column(String(64), default="")
+    kind: Mapped[str] = mapped_column(String(32), default="")
+    entity_type: Mapped[str] = mapped_column(String(32), default="", index=True)
+    entity_value: Mapped[str] = mapped_column(String(500), default="", index=True)
+    url: Mapped[str] = mapped_column(Text, default="")
+    status: Mapped[str] = mapped_column(String(16), default="unverified")
+    confidence: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
+    evidence_json: Mapped[str] = mapped_column(Text, default="{}")

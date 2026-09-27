@@ -1,9 +1,13 @@
 """``python -m openatlas.utils.forge`` - scaffolder + verifier used by skill-forge.
 
 Subcommands:
-  new-engine   Scaffold a new engine module, register it, add a methods.yaml block,
-               and write a pytest stub.
-  verify       Run the verification harness for a function (or all functions).
+  new-engine    Scaffold a new engine module, register it, add a methods.yaml block,
+                and write a pytest stub.
+  verify        Verify a function (or all functions) with the five-check harness.
+  new-skill     Generate a new agent skill (.claude/skills/<name>/SKILL.md).
+  verify-skill  Lint a skill (or --all): spec frontmatter, sections, runnable commands.
+  doctor        Automatically verify every tool the skills rely on (--live: also probe
+                the public sources from your network).
 
 The generated engine follows the project's BaseTool/ToolSpec/ToolResult pattern and is
 public-data-only by construction (no auth headers, no keys, robots-gated scraping).
@@ -12,9 +16,11 @@ public-data-only by construction (no auth headers, no keys, robots-gated scrapin
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 from openatlas.config import Config
 
@@ -90,77 +96,205 @@ METHODS_BLOCK = '''\
 '''
 
 
-def _tools_dir() -> Path:
-    return Path(Config.files.package_root) / "tools"
+SKILL_TEMPLATE = """---
+name: {name}
+description: >-
+  {description}
+license: MIT
+metadata:
+  project: OpenAtlas
+  generated_by: skill-forge
+---
+
+# {name}
+
+{purpose}
+
+## When to trigger
+
+{triggers}
+
+Do **not** trigger it for anything that needs a paid API key, a login, or data that is not
+publicly visible - OpenAtlas policy forbids those.
+
+## Steps
+
+{steps}
+
+```bash
+{commands}
+```
+
+## Verification
+
+This skill is only done when every check below passes:
+
+```bash
+python -m openatlas.utils.forge verify-skill {name}
+python -m openatlas.utils.forge doctor
+```
+
+{verification}
+
+## Tools this skill needs
+
+{tools}
+
+## Definition of done
+
+- `python -m openatlas.utils.forge verify-skill {name}` reports ok.
+- Every claim in the output carries a source link and a verification status.
+- No paid key, no login, robots.txt respected.
+"""
 
 
-def cmd_new_engine(a: argparse.Namespace) -> int:
-    module = a.module or _camel_to_snake(a.engine)
-    path = _tools_dir() / f"{module}.py"
-    if path.exists() and not a.force:
-        print(f"refusing to overwrite {path} (use --force)")
-        return 1
+@dataclasses.dataclass
+class Paths:
+    """Where the scaffolder writes. Defaults to the real project; the doctor uses a temp dir."""
 
+    tools_dir: Path = dataclasses.field(default_factory=lambda: Path(Config.files.package_root) / "tools")
+    methods_yaml: Path = dataclasses.field(default_factory=lambda: Path(Config.files.methods_yaml))
+    tests_dir: Path = dataclasses.field(default_factory=lambda: Path(Config.files.project_root) / "tests")
+    tools_init: Path = dataclasses.field(default_factory=lambda: Path(Config.files.package_root) / "tools" / "__init__.py")
+
+
+def scaffold_engine(*, engine: str, common_name: str, abbrev: str, function: str,
+                    description: str = "new OSINT engine", function_description: str = "",
+                    backend: str = "local", module: str = "", network: bool = False,
+                    scrapes_web: bool = False, needs_llm: bool = False, force: bool = False,
+                    paths: Optional[Paths] = None) -> str:
+    """Write engine + import + methods.yaml block + pytest. Returns the module name."""
+    paths = paths or Paths()
+    module = module or _camel_to_snake(engine)
+    target = paths.tools_dir / f"{module}.py"
+    if target.exists() and not force:
+        raise FileExistsError(f"refusing to overwrite {target} (use --force)")
     maybe_http = ""
-    if a.scrapes_web:
-        maybe_http = "from openatlas.utils.http import scrape_get\n"
-    elif a.network:
-        maybe_http = "from openatlas.utils.http import api_get_json\n"
+    if scrapes_web:
+        maybe_http = "from openatlas.utils.http import scrape_get  # noqa: F401\n"
+    elif network:
+        maybe_http = "from openatlas.utils.http import api_get_json  # noqa: F401\n"
+    fdesc = function_description or description
+    target.write_text(ENGINE_TEMPLATE.format(
+        engine=engine, abbrev=abbrev, common_name=common_name, description=description,
+        function=function, fdesc=fdesc, backend=backend, network=bool(network or scrapes_web),
+        scrapes_web=bool(scrapes_web), needs_llm=bool(needs_llm), maybe_http_import=maybe_http),
+        encoding="utf-8")
+    init = paths.tools_init.read_text(encoding="utf-8") if paths.tools_init.exists() else ""
+    if f"import {module}" not in init:
+        paths.tools_init.write_text(
+            init + f"\nfrom openatlas.tools import {module}  # noqa: F401,E402  (skill-forge)\n",
+            encoding="utf-8")
+    existing = paths.methods_yaml.read_text(encoding="utf-8") if paths.methods_yaml.exists() else ""
+    paths.methods_yaml.write_text(existing + METHODS_BLOCK.format(
+        engine=engine, common_name=common_name, abbrev=abbrev, description=description,
+        function=function, fdesc=fdesc), encoding="utf-8")
+    (paths.tests_dir / f"test_{module}.py").write_text(
+        PYTEST_TEMPLATE.format(engine=engine, module=module, function=function), encoding="utf-8")
+    return module
 
-    path.write_text(
-        ENGINE_TEMPLATE.format(
-            engine=a.engine, abbrev=a.abbrev, common_name=a.common_name,
-            description=a.description, function=a.function,
-            fdesc=a.function_description or a.description, backend=a.backend,
-            network=bool(a.network or a.scrapes_web), scrapes_web=bool(a.scrapes_web),
-            needs_llm=bool(a.needs_llm), maybe_http_import=maybe_http,
-        ),
-        encoding="utf-8",
-    )
-    print(f"wrote {path}")
 
-    # Register import in tools/__init__.py
-    init = _tools_dir() / "__init__.py"
-    text = init.read_text(encoding="utf-8")
-    if module not in text:
-        text += f"\nfrom openatlas.tools import {module}  # noqa: F401,E402  (skill-forge)\n"
-        init.write_text(text, encoding="utf-8")
-        print(f"registered import in {init}")
+def scaffold_skill(*, name: str, description: str, purpose: str, triggers: List[str],
+                   steps: List[str], verification: List[str], tools: List[str],
+                   commands: Optional[List[str]] = None,
+                   root: Optional[Path] = None, force: bool = False) -> Path:
+    """Write .claude/skills/<name>/SKILL.md from the template. Returns its path."""
+    root = root or Path(Config.files.project_root) / ".claude" / "skills"
+    d = root / name
+    target = d / "SKILL.md"
+    if target.exists() and not force:
+        raise FileExistsError(f"refusing to overwrite {target} (use --force)")
+    d.mkdir(parents=True, exist_ok=True)
+    bullets = lambda items: "\n".join(f"- {i}" for i in items)  # noqa: E731
+    numbered = lambda items: "\n".join(f"{n}. {i}" for n, i in enumerate(items, 1))  # noqa: E731
+    target.write_text(SKILL_TEMPLATE.format(
+        name=name, description=description.replace("\n", " "), purpose=purpose,
+        triggers=bullets(triggers), steps=numbered(steps), verification=numbered(verification),
+        tools=bullets(tools),
+        commands="\n".join(commands or ["openatlas catalog"])), encoding="utf-8")
+    return target
 
-    # Append methods.yaml block
-    my = Path(Config.files.methods_yaml)
-    my.write_text(
-        my.read_text(encoding="utf-8") + METHODS_BLOCK.format(
-            engine=a.engine, common_name=a.common_name, abbrev=a.abbrev,
-            description=a.description, function=a.function,
-            fdesc=a.function_description or a.description,
-        ),
-        encoding="utf-8",
-    )
-    print(f"documented in {my}")
 
-    # Write pytest
-    test = Path(Config.files.project_root) / "tests" / f"test_{module}.py"
-    test.write_text(
-        PYTEST_TEMPLATE.format(engine=a.engine, module=module, function=a.function),
-        encoding="utf-8",
-    )
-    print(f"wrote {test}")
-    print("\nNext: run `python -m openatlas.utils.forge verify %s`" % a.function)
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+def cmd_new_engine(a: argparse.Namespace) -> int:
+    try:
+        module = scaffold_engine(
+            engine=a.engine, common_name=a.common_name, abbrev=a.abbrev, function=a.function,
+            description=a.description, function_description=a.function_description,
+            backend=a.backend, module=a.module, network=a.network, scrapes_web=a.scrapes_web,
+            needs_llm=a.needs_llm, force=a.force)
+    except FileExistsError as exc:
+        print(exc)
+        return 1
+    print(f"wrote openatlas/tools/{module}.py, methods.yaml block, tests/test_{module}.py")
+    print(f"\nNext: python -m openatlas.utils.forge verify {a.function}")
     return 0
 
 
 def cmd_verify(a: argparse.Namespace) -> int:
     from openatlas.utils.smoke_run import verify_all, verify_function
 
-    if a.function:
-        report = verify_function(a.function)
-        ok = report["ok"]
-    else:
-        report = verify_all()
-        ok = report["ok"]
+    report = verify_function(a.function) if a.function else verify_all()
     print(json.dumps(report, indent=2))
+    return 0 if report["ok"] else 1
+
+
+def cmd_new_skill(a: argparse.Namespace) -> int:
+    try:
+        path = scaffold_skill(
+            name=a.name, description=a.description, purpose=a.purpose or a.description,
+            triggers=a.trigger, steps=a.step or ["Describe the steps."],
+            verification=a.verify or ["Every output claim is re-checked against an independent source."],
+            tools=a.tool or ["`openatlas/utils/smoke_run.py` - dry-run verification"],
+            commands=a.command, force=a.force)
+    except FileExistsError as exc:
+        print(exc)
+        return 1
+    print(f"wrote {path}")
+    # Generate -> verify in one step: the new skill is linted immediately.
+    from openatlas.skills import linter
+
+    r = linter.lint_skill(str(path.parent), run_commands=not a.no_commands)
+    for e in r["errors"]:
+        print(f"  ✗ {e}")
+    print("verified: ok" if r["ok"] else "verification FAILED - edit the SKILL.md and run "
+          f"`python -m openatlas.utils.forge verify-skill {a.name}`")
+    return 0 if r["ok"] else 1
+
+
+def cmd_verify_skill(a: argparse.Namespace) -> int:
+    from openatlas.skills import linter, registry
+
+    targets = [s["path"] for s in registry.list_skills()] if a.all or not a.name else \
+        [str(registry.skills_dir() / a.name)]
+    ok = True
+    for t in targets:
+        r = linter.lint_skill(t, run_commands=not a.no_commands)
+        ok &= r["ok"]
+        status = "OK  " if r["ok"] else "FAIL"
+        print(f"{status} {r['name']}: {len(r.get('triggers', []))} triggers, "
+              f"{len(r.get('commands', []))} commands checked")
+        for e in r["errors"]:
+            print(f"     ✗ {e}")
+        for w in r["warnings"]:
+            print(f"     ! {w}")
     return 0 if ok else 1
+
+
+def cmd_doctor(a: argparse.Namespace) -> int:
+    from openatlas.skills import doctor
+
+    r = doctor.run_all(live=a.live)
+    if a.json:
+        print(json.dumps(r, indent=2))
+    else:
+        for c in r["checks"]:
+            mark = {"pass": "PASS", "warn": "WARN", "fail": "FAIL"}[c["status"]]
+            print(f"{mark}  {c['tool']:<34} {c['detail']}")
+        print("\nall tools verified" if r["ok"] else "\nsome tools FAILED verification")
+    return 0 if r["ok"] else 1
 
 
 def _camel_to_snake(name: str) -> str:
@@ -174,7 +308,7 @@ def _camel_to_snake(name: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="openatlas.utils.forge",
-                                description="Scaffold and verify OpenAtlas engines.")
+                                description="Generate and verify OpenAtlas engines and skills.")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     ne = sub.add_parser("new-engine", help="scaffold a new engine")
@@ -195,6 +329,31 @@ def build_parser() -> argparse.ArgumentParser:
     v = sub.add_parser("verify", help="verify a function (or all)")
     v.add_argument("function", nargs="?", default="")
     v.set_defaults(func=cmd_verify)
+
+    ns = sub.add_parser("new-skill", help="generate a new agent skill (SKILL.md)")
+    ns.add_argument("--name", required=True, help="lowercase-hyphen skill name")
+    ns.add_argument("--description", required=True, help="what it does + when to use it (<=1024)")
+    ns.add_argument("--purpose", default="")
+    ns.add_argument("--trigger", action="append", required=True, help="a trigger example (repeat 3+)")
+    ns.add_argument("--step", action="append", help="a step (repeatable)")
+    ns.add_argument("--verify", action="append", help="a verification check (repeatable)")
+    ns.add_argument("--tool", action="append", help="a tool the skill needs and why (repeatable)")
+    ns.add_argument("--command", action="append",
+                    help="a command the skill runs (repeatable; each is --help-probed on verify)")
+    ns.add_argument("--force", action="store_true")
+    ns.add_argument("--no-commands", action="store_true", help="skip running documented commands")
+    ns.set_defaults(func=cmd_new_skill)
+
+    vs = sub.add_parser("verify-skill", help="lint a skill (or --all)")
+    vs.add_argument("name", nargs="?", default="")
+    vs.add_argument("--all", action="store_true")
+    vs.add_argument("--no-commands", action="store_true", help="skip running documented commands")
+    vs.set_defaults(func=cmd_verify_skill)
+
+    d = sub.add_parser("doctor", help="automatically verify every tool the skills use")
+    d.add_argument("--live", action="store_true", help="also probe public sources from this network")
+    d.add_argument("--json", action="store_true")
+    d.set_defaults(func=cmd_doctor)
     return p
 
 

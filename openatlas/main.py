@@ -20,7 +20,18 @@ def _print_banner() -> None:
         pass
 
 
+def _cli_commands() -> set:
+    from openatlas.cli import COMMANDS
+
+    return COMMANDS
+
+
 def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in _cli_commands():
+        from openatlas.cli import main as cli_main
+
+        return cli_main(argv)
     args = parse_args(argv)
 
     if args.show_version:
@@ -77,9 +88,9 @@ def main(argv=None) -> int:
         return 0
 
     if args.start_web_server:
-        from openatlas.webserver.app import launch
+        from openatlas.web.server import serve
 
-        return launch()
+        return serve()
 
     # Default: AA-mode function runner
     from openatlas.core.app import OpenAtlas

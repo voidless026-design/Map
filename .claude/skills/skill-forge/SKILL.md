@@ -1,141 +1,134 @@
 ---
 name: skill-forge
 description: >-
-  Generate a NEW OpenAtlas OSINT function/engine (or an agentskills.io skill wrapping
-  it) AND automatically verify it before it is trusted. Use whenever the user wants to
-  "add a new OSINT function", "scaffold an engine", "wrap <some free API/tool> as an
-  OpenAtlas tool", "create a skill for <task>", or "make a tool that does <X>". The
-  skill scaffolds the code + methods.yaml entry + registry hook + a pytest, then runs a
-  five-part verification (import/registration, schema-lint, mocked dry-run returning a
-  valid ToolResult, public-only/robots + no-secrets guard, and pytest) and reports
-  pass/fail. It refuses to declare the tool "done" while any check fails.
+  Generate a new OpenAtlas capability - an OSINT engine/function OR an agent skill
+  (SKILL.md) - and automatically verify it before anyone trusts it. Use when the user
+  says "add a function that...", "wrap <free API> as a tool", "scaffold an engine",
+  "create a skill for <task>", "turn this workflow into a skill", or "check that my
+  skills still work". Engines get code + methods.yaml + registry hook + pytest, then a
+  7-check verification (registered, spec, callable, documented, robots-gated, no
+  auth/secrets, mocked dry-run returns a valid ToolResult). Skills get a spec-valid
+  SKILL.md (trigger examples, steps, verification, tools), then an immediate lint that
+  runs every documented command. Both finish with `doctor`, which proves the verifying
+  tools themselves work on known-good/known-bad fixtures. Nothing is reported done while
+  a check fails. Free/local backends only - never a paid key.
 license: MIT
 metadata:
   project: OpenAtlas
-  produces: [python-engine, methods.yaml-entry, pytest, verification-report]
+  produces: [python-engine, methods.yaml-entry, pytest, skill-md, verification-report]
 ---
 
-# skill-forge — generate a tool, then prove it works
+# skill-forge - generate it, then prove it works
 
-`skill-forge` exists because a generated OSINT function you can't trust is worse than
-no function: it produces outputs an investigator then has to re-check by hand. This
-skill removes that manual re-checking by baking a **verification step** into every tool
-it creates. It does two things in one pass: **(1) generate** a new engine/function, and
-**(2) verify** it against a fixed contract.
+The manual task this removes: an AI hands you a new tool or a new skill and you then
+check by hand whether it imports, whether its docs match, whether the commands it tells
+you to run even exist, and whether it quietly needs a paid key or scrapes behind a
+login. skill-forge does the **generate** step and the **verify** step in one pass and
+refuses to call anything finished until the checks are green.
 
 ## When to trigger
 
-Trigger this skill when the request is to create or extend an OSINT capability. Concrete
-examples:
+- "Add a function that looks up a domain's DNS TXT records." -> `new-engine`
+- "Wrap the free crt.sh certificate-transparency API as an OpenAtlas tool." -> `new-engine`
+- "I want a tool that validates phone numbers offline with `phonenumbers`." -> `new-engine`
+- "Create a skill that investigates a username end-to-end." -> `new-skill`
+- "Turn my 'curate the brain' routine into a reusable skill." -> `new-skill`
+- "Do all our skills and their tools still work?" -> `verify-skill --all` + `doctor`
 
-- "Add a function that looks up a domain's DNS TXT records." → new engine
-  `dns_txt_lookup` under a `DnsEngine`.
-- "Wrap the free crt.sh certificate-transparency API as an OpenAtlas tool." → new
-  `CertTransparencyEngine.search_crtsh`.
-- "I want a tool that checks whether a phone number is valid using the local
-  `phonenumbers` library." → new `PhoneEngine.validate_number`.
-- "Scaffold an engine for Mastodon public profile lookups." → new `MastodonEngine`.
-- "Create a skill that summarizes a target's breach exposure." → composite skill that
-  chains existing engines and is verified end-to-end.
-
-Do **not** trigger it for: running an existing function (use the CLI), fixing a bug in an
-existing engine (edit directly), or anything that requires a paid API key (OpenAtlas
-policy forbids it — propose a free/local substitute instead).
+Do **not** trigger it to *run* an existing function (use `openatlas run <slug> <value>`),
+to fix a bug in an existing engine (edit it directly), or for anything that needs a
+paid API key, a login, a CAPTCHA or paywalled data - propose a free/local substitute.
 
 ## Inputs to collect first
 
-1. **Capability**: what the function does, in one sentence.
-2. **Backend**: which free/keyless/local source it uses (public API, local library,
-   Ollama). If the user names a paid service, map it to a free substitute and confirm.
-3. **Signature**: function name (snake_case), arguments with `type`/`required`/`description`.
-4. **Network shape**: does it hit the network? does it scrape web pages (→ must be
-   robots-gated)? does it need Ollama?
+1. **What it does** in one sentence, and **when** someone would ask for it (3+ phrasings).
+2. **Backend** - a free, keyless or local source (public API, local library, Ollama).
+3. For engines: function name, typed arguments, and the network shape (`--network`,
+   `--scrapes-web` -> robots-gated, `--needs-llm` -> degrades without Ollama).
+4. For skills: the steps, the commands it runs, how its output is verified, and the
+   tools it relies on.
 
-## Step 1 — Generate
+## Step 1 - Generate
 
-Create the files, following the existing engine pattern (see
-`openatlas/tools/ip_lookups.py` for a clean template):
-
-1. **Engine module** `openatlas/tools/<engine>.py`:
-   - a `BaseTool` subclass decorated with `@ToolRegistry.register("<common-name>")`;
-   - `abbrev`, `description`, and a `specs` dict of `ToolSpec` objects (set
-     `network`, `scrapes_web`, `needs_llm`, `backend` honestly);
-   - each function is a `@staticmethod` returning a `ToolResult`. Use
-     `openatlas.utils.http.api_get_json` for public APIs and
-     `openatlas.utils.http.scrape_get` for web pages (it enforces robots.txt). On
-     failure return `ToolResult.failure(...)`; when a backend is unreachable return
-     `ToolResult.unavailable(...)` so it degrades instead of crashing.
-   - **Never** send `Authorization`/`Cookie` headers, log in, solve CAPTCHAs, or bypass
-     paywalls. **Never** hardcode a key.
-2. **Register the import** in `openatlas/tools/__init__.py`.
-3. **Document it** in `openatlas/methods/methods.yaml`: an engine block with
-   `common_name`, `abbrev`, `description`, and a `functions` map giving every argument a
-   `type`, `required`, and `description`.
-4. **Write a pytest** `tests/test_<engine>.py` that mocks the network
-   (`openatlas.utils.http`) / Ollama and asserts a well-formed `ToolResult`.
-
-Use the scaffolder to do the mechanical parts:
+**An engine** (writes `openatlas/tools/<module>.py`, the import, the `methods.yaml`
+block and `tests/test_<module>.py`):
 
 ```bash
-python -m openatlas.utils.forge new-engine \
-  --engine <EngineClass> --common-name <common-name> --abbrev <abbr> \
-  --function <func_name> --backend "<free backend>" [--scrapes-web] [--needs-llm]
+python -m openatlas.utils.forge new-engine --engine DnsTxtEngine --common-name dns-txt \
+  --abbrev dT --function lookup_txt --backend "dnspython (local)" --network
 ```
 
-## Step 2 — Verify (the differentiator)
+Then implement the body. Rules: return a `ToolResult`; use `openatlas.utils.http`
+(`api_get_json` for APIs, `scrape_get` for pages - robots-gated); on an unreachable
+backend return `ToolResult.unavailable(...)`; never send `Authorization`/`Cookie`.
 
-Run the verification harness. It performs five checks and returns a JSON report; the
-tool is only "done" when every check passes.
+**A skill** (writes `.claude/skills/<name>/SKILL.md` from the spec template and lints it
+immediately - generation and verification are one command):
 
 ```bash
-python -m openatlas.utils.forge verify <func_name>
-# or, over everything:
-python3 openatlas.py --verify
+python -m openatlas.utils.forge new-skill --name username-deep-dive \
+  --description "What it does and when to use it (<=1024 chars)" \
+  --trigger "Look up jdoe across the web" --trigger "Where else is jdoe?" \
+  --trigger "Is this handle the same person?" \
+  --step "Run the case" --command 'openatlas investigate "jdoe" --purpose "..."' \
+  --verify "Every finding has a source URL and a verification status" \
+  --tool "openatlas/investigate/verify.py - automatic re-checks"
 ```
 
-The five checks (implemented in `openatlas/utils/smoke_run.py`):
+`osint-investigate` and `kb-curate` in this repo were generated exactly this way.
 
-1. **registered / callable** — the function is importable and present in
-   `ToolRegistry`, with a `ToolSpec`.
-2. **documented** — it appears in `methods.yaml` with a valid, typed argument schema
-   (validated by `openatlas/utils/schema_validate.py`).
-3. **returns_toolresult** — a **mocked dry-run** (network + Ollama patched off) returns
-   a well-formed `ToolResult` whose `content` is JSON-serialisable and whose failed
-   results carry an `error`. Proves the function never hard-crashes and degrades
-   gracefully offline.
-4. **public-only / no-secrets guard** — if the function's own source calls
-   `scrape_get`, its spec must declare `scrapes_web=True` (robots enforced); the source
-   must not use auth headers/cookies; and the secret lint
-   (`openatlas/utils/secret_lint.py`) must find no hardcoded key or paid-key literal.
-5. **pytest** — `pytest -k <func_name>` is green.
+## Verification
 
-Then finish with:
+Nothing is done until all of these pass:
 
 ```bash
-python -m openatlas.utils.secret_lint openatlas/tools/<engine>.py   # must be clean
-ruff check openatlas/tools/<engine>.py
+python -m openatlas.utils.forge verify lookup_txt      # one engine function
+python3 openatlas.py --verify                          # every function (44+)
+python -m openatlas.utils.forge verify-skill --all     # every SKILL.md
+python -m openatlas.utils.forge doctor                 # the verifying tools themselves
+python -m pytest -q
 ```
 
-Report the verification JSON back to the user. If any check fails, fix the generated
-code and re-run — do **not** report success on a failing check.
+1. **Engine function** (`openatlas/utils/smoke_run.py`): registered in `ToolRegistry`;
+   has a `ToolSpec`; callable; documented in `methods.yaml` with a typed schema; if it
+   calls `scrape_get` its spec says `scrapes_web=True`; no auth headers/cookies; no
+   secrets; and a **mocked dry-run** (all HTTP -> 404, Ollama off) returns a valid
+   `ToolResult`, which proves it degrades instead of crashing.
+2. **Skill** (`openatlas/skills/linter.py`): frontmatter follows the agentskills.io
+   rules (name 1-64 lowercase-hyphen chars matching the folder, description 1-1024);
+   at least 3 trigger examples; a Verification section and a Tools section; **every
+   `openatlas ...` command in a code block is executed with `--help` and must exit 0**;
+   every referenced `openatlas/...` file and `openatlas.*` module exists; no secret or
+   paid-key literal.
+3. **Tool doctor** (`openatlas/skills/doctor.py`): each tool above is itself run against
+   a known-good and a known-bad fixture - e.g. the secret lint must catch a planted
+   fake key, the schema validator must reject a broken `methods.yaml`, the robots guard
+   must block `/private`, the scaffolder does a full round-trip in a temp directory
+   (never touching the repo), and the evidence verifier must label confirmed / refuted /
+   unverified correctly. `doctor --live` also probes each public source once from your
+   network and reports which ones answer.
 
-## Tools this skill needs (and why)
+Report the JSON/summary back. If any check fails, fix and re-run - never report
+success on a failing check.
 
-These are the tools that make the output trustworthy; all ship with OpenAtlas:
+## Tools this skill needs
 
-| Tool | Module | Why it improves the output |
+| Tool | Module | Why it makes the output trustworthy |
 |---|---|---|
-| Schema validator | `openatlas/utils/schema_validate.py` | Guarantees the new function is documented with typed args and matches the registry — no silent drift. |
-| Smoke/dry-run runner | `openatlas/utils/smoke_run.py` | Executes the function with mocked network/LLM and asserts a valid `ToolResult` — catches crashes and bad return shapes without touching the internet. |
-| ToolResult validator | `openatlas/utils/schema_validate.py:validate_tool_result` | Enforces the uniform result envelope so DB logging and reports never break. |
-| robots/ToS guard | `openatlas/utils/robots.py` | Confirms scrapers are robots-gated and lets the tool download robots.txt/security.txt for the record. |
-| Ollama probe | `openatlas/llm/ollama_client.py:ping/available` | Lets the tool detect a missing local LLM and degrade gracefully instead of erroring. |
-| Secret/PII lint | `openatlas/utils/secret_lint.py` | Blocks any hardcoded credential or paid-API-key literal from entering the codebase. |
-| Scaffolder | `openatlas/utils/forge.py` | Writes the boilerplate (engine, methods.yaml entry, pytest) consistently. |
+| Scaffolder | `openatlas/utils/forge.py` | Writes engine / methods.yaml / pytest / SKILL.md consistently. |
+| Smoke / dry-run runner | `openatlas/utils/smoke_run.py` | Runs every function with the network mocked; catches crashes and bad result shapes offline. |
+| Schema + ToolResult validator | `openatlas/utils/schema_validate.py` | Docs and registry can't drift; every result has the same envelope. |
+| Skill linter | `openatlas/skills/linter.py` | Spec-valid frontmatter, required sections, and commands that actually run. |
+| robots.txt guard | `openatlas/utils/robots.py` | Scrapers stay robots-gated. |
+| Network policy | `openatlas/net/client.py` | Strips credentials, caps bodies, never fetches data-broker sites. |
+| Secret / paid-key lint | `openatlas/utils/secret_lint.py` | No hardcoded credential or paid-API-key literal gets in. |
+| Evidence verifier | `openatlas/investigate/verify.py` | Findings get independent re-checks, not echoed claims. |
+| Local AI probe | `openatlas/llm/ollama_client.py` | Detects missing Ollama/GPU so LLM tools degrade instead of erroring. |
+| Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 
 ## Definition of done
 
-- New engine registered and listed by `python3 openatlas.py --show-all-functions`.
-- `python3 openatlas.py --verify <func_name>` returns `ok: true` for all five checks.
-- `methods.yaml` validates; secret lint clean; ruff clean; pytest green.
-- No paid key introduced; scrapers robots-gated; failures degrade, never crash.
+- `forge verify <function>` / `openatlas.py --verify` report `ok: true`.
+- `forge verify-skill --all` reports OK for every skill; `forge doctor` has no FAIL.
+- `pytest`, `ruff check openatlas` and `python -m openatlas.utils.secret_lint openatlas` are clean.
+- No paid key; public, unauthenticated data only; scrapers robots-gated.

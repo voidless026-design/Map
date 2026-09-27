@@ -45,3 +45,12 @@ WhatsMyName  (github.com/WebBreacher/WhatsMyName)
 Holehe  (github.com/megadose/holehe)  - optional dependency
   Used, when installed, for keyless email/account-existence corroboration.
 --------------------------------------------------------------------------------
+
+Wikipedia  (en.wikipedia.org, via the MediaWiki API)
+  The knowledge base ("brain") stores article text under CC BY-SA 4.0 (Wikipedia
+  contributors). Each stored document keeps its source URL, revision id and licence; answers
+  cite them. Redistributing a brain database must follow CC BY-SA 4.0.
+
+Python dependencies added in v2: FastAPI (MIT), Uvicorn (BSD-3), httpx (BSD-3),
+phonenumbers (Apache-2.0), psutil (BSD-3); optional ddgs (MIT), holehe (GPL-3.0, installed
+separately by the user, not bundled).

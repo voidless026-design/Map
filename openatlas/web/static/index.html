@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenAtlas</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' fill='%230b0b0c'/%3E%3Cpath d='M3 12L8 3l5 9z' fill='none' stroke='%23d4ff3a' stroke-width='1.5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <script>
+    try { const t = localStorage.getItem("oa-theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <div class="app">
+    <nav class="rail" aria-label="Sections">
+      <div class="brand">OPENATLAS</div>
+      <button class="nav on" data-view="investigate" title="Investigate">
+        <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg><span>Search</span></button>
+      <button class="nav" data-view="cases" title="Cases">
+        <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></svg><span>Cases</span></button>
+      <button class="nav" data-view="brain" title="Brain">
+        <svg viewBox="0 0 24 24"><path d="M12 3v18M5 7l7-4 7 4v10l-7 4-7-4z"/></svg><span>Brain</span></button>
+      <button class="nav" data-view="skills" title="Skills">
+        <svg viewBox="0 0 24 24"><path d="M12 3l2.6 5.6L20 9.5l-4 4 1 5.5-5-2.8-5 2.8 1-5.5-4-4 5.4-.9z"/></svg><span>Skills</span></button>
+      <div class="spacer"></div>
+      <button class="nav" data-view="system" title="System">
+        <svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="12"/><path d="M8 20h8M12 16v4"/></svg><span>System</span></button>
+    </nav>
+
+    <main class="main">
+      <header class="top">
+        <h1 id="view-title">Investigate</h1>
+        <div class="grow"></div>
+        <span class="pill" id="pill-profile"><span class="dot"></span><span>profile</span></span>
+        <span class="pill" id="pill-llm"><span class="dot"></span><span>local AI</span></span>
+        <span class="pill" id="pill-brain"><span class="dot"></span><span>brain</span></span>
+        <button class="icon-btn" id="theme" title="Toggle light / dark" aria-label="Toggle theme">◐</button>
+      </header>
+
+      <!-- INVESTIGATE -->
+      <section class="view stack" id="v-investigate">
+        <div class="panel command">
+          <div class="target">
+            <div class="prompt">›</div>
+            <input class="big" id="q" autocomplete="off" spellcheck="false"
+                   placeholder="Name, @username, email, phone, domain, URL or IP…" aria-label="Target">
+            <div class="typechip"><button id="type-btn" title="Change what kind of target this is">auto</button></div>
+          </div>
+          <div class="types" id="types"></div>
+          <div class="purpose">
+            <span class="label">Purpose</span>
+            <div class="row" id="purposes"></div>
+            <input id="purpose" placeholder="…or describe your lawful purpose" maxlength="200">
+          </div>
+        </div>
+
+        <div class="filters" id="filters" role="tablist"></div>
+        <div class="tiles" id="tiles"></div>
+
+        <div class="panel">
+          <div class="preview">
+            <code id="cmd"></code>
+            <button class="btn ghost" id="copy">Copy</button>
+            <button class="btn primary" id="run">Run ▸</button>
+          </div>
+          <div class="params hidden" id="params"></div>
+        </div>
+
+        <div id="results"></div>
+      </section>
+
+      <!-- CASES -->
+      <section class="view stack hidden" id="v-cases">
+        <div class="panel"><table class="t"><thead><tr>
+          <th>Target</th><th>Type</th><th>Purpose</th><th>When</th><th>Findings</th></tr></thead>
+          <tbody id="cases-body"></tbody></table></div>
+        <div id="case-detail"></div>
+      </section>
+
+      <!-- BRAIN -->
+      <section class="view stack hidden" id="v-brain">
+        <div class="panel" style="padding:20px">
+          <div class="row" style="justify-content:space-between">
+            <div>
+              <div class="label">Knowledge base</div>
+              <div id="brain-line" style="font-size:18px;margin-top:8px">—</div>
+            </div>
+            <div class="row">
+              <button class="btn primary" id="brain-start">Grow the brain</button>
+              <button class="btn" id="brain-pause">Pause</button>
+            </div>
+          </div>
+          <div class="progress" style="margin-top:18px"><i id="brain-bar"></i></div>
+          <div class="row muted mono" style="margin-top:10px;font-size:12px;justify-content:space-between">
+            <span id="brain-state">—</span><span id="brain-path">—</span></div>
+        </div>
+        <div class="stats" id="brain-stats"></div>
+        <div class="panel" style="padding:18px"><div class="label" style="margin-bottom:14px">Tiers</div>
+          <div class="tiers" id="brain-tiers"></div></div>
+        <div class="panel">
+          <div class="command"><div class="target"><div class="prompt">?</div>
+            <input class="big" id="ask-q" placeholder="Ask the brain anything it has learned…" aria-label="Question">
+            <div class="typechip"><button id="ask-go">Ask</button></div></div></div>
+          <div id="ask-out"></div>
+        </div>
+      </section>
+
+      <!-- SKILLS -->
+      <section class="view stack hidden" id="v-skills">
+        <div class="row" style="justify-content:space-between">
+          <div class="muted">Skills generate new tools and verify them — and every tool they rely on is re-checked here.</div>
+          <button class="btn primary" id="skills-check">Run all checks</button>
+        </div>
+        <div class="panel" id="doctor"></div>
+        <div class="grid2" id="skills"></div>
+      </section>
+
+      <!-- SYSTEM -->
+      <section class="view stack hidden" id="v-system"><div id="system"></div></section>
+    </main>
+  </div>
+  <div class="toast" id="toast"></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

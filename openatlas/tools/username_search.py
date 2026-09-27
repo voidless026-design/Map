@@ -1,39 +1,27 @@
 """UsernameCheckEngine (ucE) - username enumeration via the OSS WhatsMyName dataset.
 
-WhatsMyName (WebBreacher/WhatsMyName, CC-BY-4.0) maps sites to a request URL and a
-detection rule (expected string + HTTP code). We fetch each site's public profile URL
-for the username and apply the rule. No key, public pages only.
-
-If the dataset file is absent, the engine degrades gracefully and explains how to
-fetch it (``make fetch-data``).
+Delegates to the bounded, parallel sweep in ``openatlas.investigate.sources.usernames``
+(all 717 sites, each site's own headers/POST body/character rules). It used to check the
+first 200 sites one at a time with an 8 s timeout each, which could hang for many minutes.
+No key, public pages only. If the dataset is missing it explains how to fetch it.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 from typing import Any, Dict, List
 
-from openatlas.config import Config
 from openatlas.core.registry import BaseTool, ToolRegistry, ToolResult, ToolSpec
 from openatlas.logger import get_logger
-from openatlas.utils.http import api_get
 
 log = get_logger("openatlas.tools.username")
 
-_MAX_SITES = int(200)  # keep runs bounded/polite
 
+async def _sweep(username: str) -> List[Dict[str, Any]]:
+    from openatlas.investigate.sources.usernames import sweep
+    from openatlas.net.client import Net
 
-def _load_sites() -> List[Dict[str, Any]]:
-    path = Path(Config.files.whatsmyname)
-    if not path.exists():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-        return data.get("sites", [])
-    except (ValueError, OSError) as exc:  # pragma: no cover
-        log.debug("could not load WhatsMyName data: %s", exc)
-        return []
+    async with Net() as net:
+        return await sweep(username, net)
 
 
 @ToolRegistry.register("username-enumeration")
@@ -52,38 +40,24 @@ class UsernameCheckEngine(BaseTool):
 
     @staticmethod
     def check_usernames(username: str) -> ToolResult:
-        sites = _load_sites()
-        if not sites:
+        from openatlas.investigate.sources.usernames import load_sites
+        from openatlas.net.aio import run_sync
+
+        if not load_sites():
             return ToolResult.unavailable(
                 "check_usernames",
                 "WhatsMyName dataset not found. Run `make fetch-data` to download wmn-data.json.",
                 username=username,
             )
-        matches: Dict[str, str] = {}
-        checked = 0
-        for site in sites[:_MAX_SITES]:
-            try:
-                uri_check = site["uri_check"].replace("{account}", username)
-            except KeyError:
-                continue
-            checked += 1
-            try:
-                resp = api_get(uri_check, timeout=8)
-            except Exception:
-                continue
-            e_code = site.get("e_code")
-            e_string = site.get("e_string")
-            m_code = site.get("m_code")
-            m_string = site.get("m_string")
-            body = resp.text or ""
-            hit = resp.status_code == e_code and (e_string is None or e_string in body)
-            miss = (m_code is not None and resp.status_code == m_code) or (
-                m_string is not None and m_string in body
-            )
-            if hit and not miss:
-                matches[site.get("name", uri_check)] = uri_check
+        results = run_sync(_sweep(username))
+        matches = {r["site"]: r["profile_url"] for r in results if r["status"] == "found"}
         return ToolResult(
             tool_name="check_usernames",
-            content={"username": username, "checked_sites": checked, "matches": matches},
+            content={
+                "username": username,
+                "checked_sites": len(results),
+                "matches": matches,
+                "inconclusive": sum(1 for r in results if r["status"] in ("unknown", "error")),
+            },
             success=True,
         )

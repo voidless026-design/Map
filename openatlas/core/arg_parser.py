@@ -13,6 +13,17 @@ def build_parser() -> argparse.ArgumentParser:
         prog="openatlas",
         description="OpenAtlas - free / local / no-key OSINT toolkit (OAtlas AA mode).",
         add_help=True,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "commands (each has --help):\n"
+            "  investigate \"<target>\" --purpose \"...\"   full evidence-based investigation\n"
+            "  run <slug> <value>                       one action (what a GUI button does)\n"
+            "  catalog                                  every action grouped by filter\n"
+            "  serve                                    web GUI on http://127.0.0.1:8600\n"
+            "  cases [ID]                               past investigations\n"
+            "  kb stats|ingest|daemon|search|ask|...    the ever-growing brain\n"
+            "  doctor [--live]                          verify every tool the skills use"
+        ),
     )
 
     engine_opts = parser.add_argument_group("Engine options")

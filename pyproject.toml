@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "openatlas"
-version = "0.1.0"
+version = "0.2.0"
 description = "OpenAtlas - a fully free / open-source / local OSINT investigation toolkit. A key-free reimplementation of the OAtlas AA (Aggregate & Analyze) workflow: 40+ OSINT functions across social media, email/identity, geolocation, image & binary analysis, web/domain, code/secrets, breach and network reconnaissance - every paid API replaced by a free, no-key, or local substitute (Ollama, DuckDuckGo, WhatsMyName, Holehe, keyless breach APIs, local HF models)."
 authors = ["voidless026-design <voidless026@gmail.com>"]
 license = "MIT"
@@ -11,7 +11,6 @@ packages = [{ include = "openatlas" }]
 [tool.poetry.dependencies]
 python = ">=3.10,<4.0"
 requests = "*"
-aiohttp = "*"
 dnspython = "*"
 beautifulsoup4 = "*"
 pillow = "*"
@@ -20,9 +19,14 @@ pydantic = ">=2.0"
 python-dotenv = "*"
 pyyaml = "*"
 rich = "*"
-# openai client is only used as an OpenAI-COMPATIBLE client pointed at a local Ollama
-# server (http://localhost:11434/v1). No OpenAI key is ever required or used.
-openai = "*"
+# v2: bounded async HTTP (also talks to local Ollama's native API - no key, no openai client)
+httpx = ">=0.27"
+# Web GUI (replaces Streamlit): tiny, no build step, loopback-only by default
+fastapi = ">=0.110"
+uvicorn = ">=0.29"
+# Offline phone-number parsing and RAM/GPU-aware resource limits
+phonenumbers = "*"
+psutil = "*"
 
 # ---- Optional groups: install only what you need, none require a paid key ----
 
@@ -41,10 +45,6 @@ pytesseract = "*"
 [tool.poetry.group.browser.dependencies]
 # Free browser automation (replaces PyBA's OpenAI dependency; reasoning uses Ollama)
 playwright = "*"
-
-[tool.poetry.group.web.dependencies]
-# Optional local web UI
-streamlit = "*"
 
 [tool.poetry.group.ml]
 optional = true

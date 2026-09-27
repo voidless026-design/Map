@@ -114,6 +114,13 @@ def can_fetch(url: str, user_agent: Optional[str] = None) -> bool:
     return allowed
 
 
+def allowed_by(robots_txt: str, url: str, user_agent: Optional[str] = None) -> bool:
+    """Pure check: would ``robots_txt`` allow ``url``? (No network - used by self-tests.)"""
+    rp = urllib.robotparser.RobotFileParser()
+    rp.parse(robots_txt.splitlines())
+    return rp.can_fetch(user_agent or Config.services.user_agent, url)
+
+
 def guard(url: str) -> None:
     """Raise :class:`RobotsDisallowed` if ``url`` may not be fetched."""
     if not can_fetch(url):

@@ -1,0 +1,29 @@
+# OpenAtlas brain: keeps the knowledge base growing in the background, gently.
+# Install (Fedora / any systemd distro), as your normal user:
+#   mkdir -p ~/.config/systemd/user
+#   cp packaging/systemd/openatlas-brain.service ~/.config/systemd/user/
+#   # edit WorkingDirectory / OPENATLAS_DATA_DIR below, then:
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now openatlas-brain
+#   journalctl --user -u openatlas-brain -f          # watch it
+#   loginctl enable-linger $USER                     # keep running when logged out
+
+[Unit]
+Description=OpenAtlas brain (throttled knowledge-base ingestion)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/openatlas
+Environment=OPENATLAS_DATA_DIR=%h/openatlas-data
+ExecStart=%h/openatlas/.venv/bin/python -m openatlas.kb.daemon
+Restart=on-failure
+RestartSec=30
+# Be a good neighbour: lowest CPU priority, idle-only disk I/O, hard caps.
+Nice=19
+IOSchedulingClass=idle
+CPUQuota=50%
+MemoryMax=3G
+
+[Install]
+WantedBy=default.target

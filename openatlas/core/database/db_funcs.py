@@ -146,6 +146,92 @@ def reset_for_tests(url: str = "sqlite:///:memory:") -> None:  # pragma: no cove
     global _ENGINE, _SESSIONMAKER
     from sqlalchemy import create_engine
 
-    _ENGINE = create_engine(url, future=True)
+    kw = {}
+    if ":memory:" in url:
+        from sqlalchemy.pool import StaticPool
+
+        # One shared connection, so threads (asyncio.to_thread, the web server) see one DB.
+        kw = {"poolclass": StaticPool, "connect_args": {"check_same_thread": False}}
+    _ENGINE = create_engine(url, future=True, **kw)
     _SESSIONMAKER = sessionmaker(bind=_ENGINE, future=True)
     Base.metadata.create_all(_ENGINE)
+
+
+# --------------------------------------------------------------------------- #
+# v2 investigation cases
+# --------------------------------------------------------------------------- #
+def create_case(case_id: str, *, name: str, purpose: str, target: str, target_type: str) -> None:
+    from openatlas.core.database.models import Case
+
+    init_db()
+    with _session() as s:
+        s.add(Case(case_id=case_id, name=name, purpose=purpose, target=target,
+                   target_type=target_type, status="running"))
+        s.commit()
+
+
+def finish_case(case_id: str, report: Dict[str, Any], status: str = "done") -> None:
+    import datetime as _dt
+
+    from openatlas.core.database.models import Case, CaseEvidence
+
+    init_db()
+    with _session() as s:
+        case = s.execute(select(Case).where(Case.case_id == case_id)).scalars().first()
+        if case is None:
+            return
+        case.status = status
+        case.report_json = json.dumps(report, default=str)
+        case.finished_at = _dt.datetime.now(_dt.timezone.utc)
+        for ev in report.get("evidence", []):
+            s.add(CaseEvidence(
+                case_id=case_id, evidence_id=ev.get("id", ""), source=ev.get("source", ""),
+                kind=ev.get("kind", ""), entity_type=ev.get("entity_type") or "",
+                entity_value=(ev.get("entity_value") or "")[:500], url=ev.get("url") or "",
+                status=ev.get("status", "unverified"),
+                confidence=int(round(float(ev.get("confidence", 0)) * 100)),
+                evidence_json=json.dumps(ev, default=str)))
+        s.commit()
+
+
+def list_cases(limit: int = 50) -> List[Dict[str, Any]]:
+    from openatlas.core.database.models import Case
+
+    init_db()
+    with _session() as s:
+        rows = s.execute(select(Case).order_by(Case.id.desc()).limit(limit)).scalars().all()
+        out = []
+        for c in rows:
+            summary = json.loads(c.report_json or "{}").get("summary", {})
+            out.append({"case_id": c.case_id, "name": c.name, "purpose": c.purpose,
+                        "target": c.target, "target_type": c.target_type, "status": c.status,
+                        "created_at": c.created_at.isoformat() if c.created_at else None,
+                        "summary": summary})
+        return out
+
+
+def get_case(case_id: str) -> Optional[Dict[str, Any]]:
+    from openatlas.core.database.models import Case
+
+    init_db()
+    with _session() as s:
+        c = s.execute(select(Case).where(Case.case_id == case_id)).scalars().first()
+        if c is None:
+            return None
+        return {"case_id": c.case_id, "name": c.name, "purpose": c.purpose, "target": c.target,
+                "target_type": c.target_type, "status": c.status,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "report": json.loads(c.report_json or "{}")}
+
+
+def seen_before(entity_type: str, entity_value: str, exclude_case: str = "") -> List[Dict[str, Any]]:
+    """Other cases where the same entity was found ("have we seen this email before?")."""
+    from openatlas.core.database.models import CaseEvidence
+
+    init_db()
+    with _session() as s:
+        rows = s.execute(select(CaseEvidence).where(
+            CaseEvidence.entity_type == entity_type,
+            CaseEvidence.entity_value == entity_value.lower(),
+            CaseEvidence.case_id != exclude_case)).scalars().all()
+        return [{"case_id": r.case_id, "source": r.source, "url": r.url} for r in rows[:20]]

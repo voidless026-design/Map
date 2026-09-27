@@ -69,7 +69,10 @@ class PerplexityEngine(BaseTool):
             return ToolResult.unavailable("search_perplexity_text", f"search failed: {exc}")
 
         summary = None
-        if results and ollama_client.available():
+        # Summarising loads a local LLM; only do it when the profile allows it.
+        from openatlas.runtime import profiles
+
+        if results and profiles.active().summarize_search and ollama_client.available():
             joined = "\n".join(f"- {r['title']}: {r['body']} ({r['href']})" for r in results)
             summary = ollama_client.complete(
                 f"Summarise these search results for the query '{search_request}', "

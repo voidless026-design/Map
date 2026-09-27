@@ -1,168 +1,206 @@
 # OpenAtlas 🗺️
 
-**A fully free / open-source / local OSINT toolkit — a key-free reimplementation of
+**A free, open-source, local OSINT toolkit. It is a key-free reimplementation of
 [OAtlas](https://github.com/FauvidoTechnologies/open-atlas)'s AA (Aggregate & Analyze)
-workflow.**
+workflow, with an evidence-first investigation pipeline, a minimal web GUI and a
+knowledge base (the "brain") that keeps growing on your own disk.**
 
-OpenAtlas gives an investigator a single entry point to **19 engines / 44 functions**
-across social media, email & identity, geolocation, image & binary analysis, web &
-domain, code & secrets, breach, and network reconnaissance — with **every paid API key
-replaced by a free, keyless, or local substitute**. There is nowhere to put a paid key,
-and none is ever read.
+- **Real investigations, not true/false.**
+  - Give it a name, username, email, phone number, domain, IP address or image.
+  - It queries up to 24 free public sources in parallel and reads the top result pages.
+  - It cross-checks what it finds, then **re-checks every finding automatically**.
+  - Each finding is labelled *confirmed*, *refuted* or *unverified*, with the source link and the reason.
+- **Doesn't take over your PC.**
+  - Only one local-AI request runs at a time, and models are unloaded when idle.
+  - A memory guard refuses to load a model that won't fit, and ML models are loaded once.
+  - Network requests are bounded, with a 2 MB cap on each response.
+  - Resource profiles (lite / standard / gpu) are picked automatically from your hardware.
+- **Buttons, not snake_case.**
+  - Pick a filter (People, Username, Email, Phone, Domain & Web, IP & Network, Images, Breach, Code), then click actions.
+  - The exact CLI command is **autofilled** for you to copy.
+- **A brain on your PC or external HDD.**
+  - It is seeded from your 13-division fields-of-study list, about 1,800 topics.
+  - It then learns Wikipedia's Vital Articles and each field's categories, two levels deep.
+  - All of that runs politely in the background behind **one progress bar**.
+  - Ask it questions and get answers with citations.
+- **Skills that generate *and* verify.** See [`skill-forge`](#skills) below.
 
-> ⚖️ **Public data only. Respects robots.txt. No login/CAPTCHA/paywall bypass.**
-> See [ETHICS.md](ETHICS.md) — these rules are enforced in code.
+> ⚖️ **Public data only. Respects robots.txt. No logins, CAPTCHA solving or paywall bypass.
+> No paid API keys, ever.** Every investigation needs a stated purpose. Data-broker sites
+> are never fetched. See [ETHICS.md](ETHICS.md): these rules are enforced in code.
 
 ---
 
-## Why "free/local"? The substitution map
+## Quick start (Fedora)
+
+```bash
+sudo dnf install -y git python3 python3-pip
+git clone https://github.com/voidless026-design/Map.git openatlas
+cd openatlas                          # the repo root: the folder containing pyproject.toml
+python3 -m venv .venv && source .venv/bin/activate
+pip install -e .                      # core: GUI, investigations, brain
+pip install ddgs holehe               # web search + email account checks (both free, no key)
+
+openatlas doctor                      # self-test every tool (should print "all tools verified")
+openatlas doctor --live               # which public sources answer from YOUR network
+openatlas serve                       # opens http://127.0.0.1:8600
+```
+
+> If `pip install -e .` says *"does not appear to be a Python project"*, you are one
+> folder too deep. `cd ..` until `ls` shows `pyproject.toml`.
+
+### Local AI (optional, free): Ollama on your GPU
+
+Everything works without AI. It adds summaries, image geolocation and cited answers from the brain.
+
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+# NVIDIA: install the RPM Fusion driver first (akmod-nvidia) so Ollama uses the GPU.
+# AMD: Ollama uses ROCm; recent Fedora ships rocm packages (dnf install rocm-hip).
+ollama pull llama3.1:8b        # text (gpu profile). Use llama3.2:3b on 8-16 GB RAM without a GPU
+ollama pull llava:7b           # vision (gpu profile). moondream on the standard profile
+ollama pull nomic-embed-text   # brain search vectors
+```
+
+The **System** view in the GUI (and `/api/health`) shows your profile and whether Ollama is really on the GPU.
+Override the automatic choices with these variables:
+- `OPENATLAS_PROFILE=lite|standard|gpu`
+- `OPENATLAS_LLM_MODEL`, `OPENATLAS_VISION_MODEL` and `OPENATLAS_EMBED_MODEL`
+- `OLLAMA_HOST`
+
+### Better web search (optional): self-hosted SearXNG
+
+DuckDuckGo may throttle heavy use. A local SearXNG is free and removes that limit:
+
+```bash
+podman run -d -p 8888:8080 -e SEARXNG_SETTINGS='{"search":{"formats":["html","json"]}}' docker.io/searxng/searxng
+export OPENATLAS_SEARXNG_URL=http://127.0.0.1:8888
+```
+
+## Using it
+
+### GUI
+
+`openatlas serve` opens a dark, minimal single-page app (no CDN; it works offline) with five views:
+
+- **Search.** Type a target; its type is detected automatically.
+  - Pick a purpose, then a filter tab, then click the action tiles.
+  - The command preview fills in as you click. **Run** streams evidence cards live.
+  - Each card shows its badge, its "why", a confidence bar and its link.
+  - "What was searched" lists every source, including the ones that failed.
+- **Cases.** History, a Markdown report and a graph view (the ATSMATRIX visualizer).
+- **Brain.** One progress bar with start and pause, plus Ask, which answers with citations.
+- **Skills.** The skill cards and the doctor results.
+- **System.** Hardware, profile, Ollama/GPU status and the data path.
+
+The GUI only listens on `127.0.0.1`. Binding any other host requires `OPENATLAS_TOKEN`.
+
+### CLI: every button is a command
+
+```bash
+openatlas catalog                                   # every action, grouped by filter
+openatlas investigate "jdoe_42" --purpose "authorised background check" --filter username
+openatlas investigate jane@example.com --purpose "verify applicant (consented)" --json
+openatlas run rdap example.com                      # one action, exactly what a tile does
+openatlas run keybase jdoe_42 --purpose "..."       # sources need a purpose too
+openatlas cases                                     # history;  openatlas cases <ID> --md
+openatlas doctor [--live]                           # verify the tools
+```
+
+The legacy OAtlas flags still work: `openatlas -f check_usernames`,
+`--show-all-functions`, `--verify` and `--visualize`.
+
+## The brain (knowledge base)
+
+Put it on a big disk and start it:
+
+```bash
+export OPENATLAS_DATA_DIR=/run/media/$USER/BigHDD/openatlas   # put it in ~/.bashrc
+openatlas kb seeds            # 1,787 unique topics across your 13 divisions
+openatlas kb ingest --max 50  # learn a batch now
+openatlas kb stats            # size, progress, tiers
+openatlas kb ask "What is a homotopy?"
+```
+
+Or let it grow 24/7 as a low-priority user service. The unit runs with nice 19, idle I/O,
+a 50% CPU cap and 3 GB of RAM at most:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp packaging/systemd/openatlas-brain.service ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now openatlas-brain
+openatlas kb pause / openatlas kb resume     # e.g. while gaming
+```
+
+The brain learns in tiers:
+
+| Tier | Contents |
+|---|---|
+| 0 | Your fields of study (about 1,800 articles) |
+| 1 | Vital Articles level 4 (about 10,000) |
+| 2 | Each field's category (up to 150 per field) |
+| 3 | Relevant subcategories |
+
+Whatever you search or ask about jumps the queue. **At full depth, expect roughly
+8–15 GB and about two days** of polite, rate-limited downloading. Ingestion stops if
+less than 20 GB is free. Text is Wikipedia's, under CC BY-SA 4.0, and each stored
+article keeps its URL and attribution. Finished cases are added too, so "have we seen
+this email before?" works.
+
+## Skills
+
+The manual task these skills remove is opening a browser to check each AI answer, and
+checking by hand whether a new tool or skill actually works.
+
+| Skill | What it does |
+|---|---|
+| **`skill-forge`** | Generates an engine (`forge new-engine`) or a skill (`forge new-skill`) and **verifies it straight away**. Engines go through 7 checks, including a mocked dry-run. For skills, the frontmatter spec, ≥3 triggers and the required sections are checked, and **every documented command is run**. `forge doctor` then verifies the verifying tools on known-good and known-bad fixtures. |
+| **`osint-verify`** | Runs **automatically** after every case, re-checking findings against an independent source. Also usable by hand on pasted output. |
+| **`osint-investigate`** | Runs an evidence-first case (generated by skill-forge). |
+| **`kb-curate`** | Grows and checks the brain (generated by skill-forge). |
+
+```bash
+python -m openatlas.utils.forge new-skill --name my-skill --description "..." \
+  --trigger "..." --trigger "..." --trigger "..." --command "openatlas catalog"
+python -m openatlas.utils.forge verify-skill --all
+python -m openatlas.utils.forge doctor
+```
+
+## Free substitutes for OAtlas's paid services
 
 | OAtlas needed (paid/key) | OpenAtlas uses instead (free) |
 |---|---|
-| OpenAI / VertexAI | **Ollama** (local, OpenAI-compatible) for all LLM/vision/reasoning |
-| Perplexity | **DuckDuckGo** (`ddgs`) + optional local-LLM summarisation |
-| Hunter.io | **Holehe** + email permutation + DNS/MX verification |
-| HIBP (paid) / OathNet | **HIBP Pwned Passwords** (k-anonymity) + **XposedOrNot** (keyless) |
-| isgen.ai | **Local Hugging Face** deepfake model + C2PA/EXIF analysis |
-| Picarta / IPinfo (paid) | **EXIF GPS + Nominatim** geocode; **ip-api / ipapi.co / RIPEstat** |
-| username APIs | **WhatsMyName** OSS dataset (bundled) |
+| OpenAI / VertexAI | **Ollama** (local) |
+| Perplexity | **DuckDuckGo** (`ddgs`) or **SearXNG**, plus an optional local summary |
+| Hunter.io | **Holehe**, email permutation and DNS/MX checks |
+| HIBP (paid) / OathNet | **HIBP Pwned Passwords** (k-anonymity) and **XposedOrNot** |
+| isgen.ai | A local Hugging Face model plus C2PA/EXIF |
+| Picarta / IPinfo | EXIF GPS + **Nominatim**; **RDAP**, **ip-api** and **RIPEstat** |
+| Username APIs | The **WhatsMyName** dataset (717 sites, bundled) |
 
-`python3 openatlas.py --show-api-services` prints the full list and proves every backend
-is keyless/local.
+## Honest limits
 
-## Install
-
-```bash
-git clone https://github.com/voidless026-design/Map.git openatlas
-cd openatlas
-poetry install                       # core (no GPU needed)
-# optional groups, install what you need:
-poetry install --with search,email,image,browser,web
-poetry install --with ml             # heavy, local deepfake/DeepFace models
-make fetch-data                      # download the WhatsMyName username dataset
-# optional Rust-accelerated binary carving:
-make maturin-develop
-```
-
-For LLM-powered functions, run a local **Ollama**:
-
-```bash
-ollama serve &
-ollama pull llama3.1:8b      # text/reasoning
-ollama pull llava            # vision, for image geolocation
-```
-
-Everything else works without Ollama — those functions **degrade gracefully** with a
-clear "backend unavailable" message instead of crashing.
-
-## Usage
-
-```bash
-python3 openatlas.py --show-all-functions        # list every engine/function
-python3 openatlas.py --show-api-services         # prove backends are free/local
-python3 openatlas.py -f verify_email_address -v  # run a function (interactive args)
-python3 openatlas.py -f geolocate_using_LLMs -o  # -o = use the local Ollama LLM
-python3 openatlas.py -f check_usernames fetch_about   # chain multiple functions
-python3 openatlas.py --snapshot-txt example.com  # download robots.txt/security.txt/...
-python3 openatlas.py --verify                    # self-verify all 44 functions
-python3 openatlas.py --start-web-server          # optional Streamlit UI
-python3 openatlas.py --visualize                 # knowledge graph of the latest session
-```
-
-Every run is logged to a database (SQLite by default; MySQL/PostgreSQL optional) so you
-can rebuild reports and track investigation history.
-
-## Visualize the knowledge base 🧠
-
-Every investigation session can be rendered as an interactive knowledge graph using a
-fork of the [ATSMATRIX Agent VisualizeR](https://github.com/anyel1to/atsmatrix-agent-visualizeR--ANYEL1TO)
-(MIT), bundled in `openatlas/webserver/visualizer/`.
-
-```bash
-python3 openatlas.py --visualize                 # latest session -> http://127.0.0.1:8765
-python3 openatlas.py --visualize <SESSION_ID>    # a specific session
-python3 openatlas.py --visualize --viz-port 9000 # another port
-python3 openatlas.py --visualize --viz-no-serve  # just write output/visualizer/ (static files)
-make viz                                         # same as --visualize
-```
-
-What you see:
-
-| Cluster | OpenAtlas meaning |
-|---|---|
-| **DISCOVERY** | the target + collection engines (Reddit, GitHub, username, email, IP, pages…) |
-| **REASONING** | LLM / vision / search / browser engines |
-| **VERIFICATION** | breach and AI-image checks |
-| **SYNTHESIS** | the aggregated report node |
-
-- Each **function run** is a hub node; its **findings** fan out around it. Amber = degraded
-  (backend unavailable), red = failed.
-- **Cross-links** connect runs that surfaced the same value (e.g. one email found by two
-  engines) — independent corroboration at a glance.
-- The HUD replays the real pipeline (COLLECT → MATCH → CROSS-LINK → VERIFY → SYNTH).
-- **Ask local AI** chats with your *local* Ollama about the graph — no API key, no cloud.
-  If Ollama isn't running it shows an honest summary of the graph instead. If your browser
-  blocks the call, start Ollama with `OLLAMA_ORIGINS=http://127.0.0.1:8765 ollama serve`.
-
-The Streamlit UI (`--start-web-server`) also has a **Knowledge graph** panel; the embedded
-chat there usually falls back to the summary, so use `--visualize` for the local-AI chat.
-Everything is served from `127.0.0.1` only.
-
-## Engines (AA mode)
-
-Social media (Reddit ×2, Instagram) · Email & identity (verify, professional-email
-finder, breach checks) · Geolocation (EXIF + local vision LLM + OSM) · Image & binary
-(EXIF/C2PA, OCR, face match, firmware/strings carving) · Web & domain (get-pages,
-hyperlink extract, LLM browser automation) · Code & secrets (GitHub profile/repos +
-public-repo secret scan) · Breach (keyless) · Network (authorization-gated port scan).
-
-Full details: `python3 openatlas.py --show-all-functions`.
-
-## The two skills (`.claude/skills/`)
-
-OpenAtlas ships two Claude Code skills that remove the manual re-checking an investigator
-does after an AI produces an output:
-
-- **`skill-forge`** — *generates a new OSINT function/engine and then verifies it*
-  (import/registration, schema-lint, mocked dry-run returning a valid `ToolResult`,
-  public-only/robots + no-secrets guard, and pytest). It refuses to call a tool "done"
-  while any check fails. `python -m openatlas.utils.forge new-engine ...` then
-  `python -m openatlas.utils.forge verify <fn>`.
-- **`osint-verify`** — *independently verifies findings* an AI produced (resolve a
-  claimed profile URL, cross-check geolocation vs. EXIF + OSM, confirm email MX,
-  second-source a breach hit) and emits a corroboration table, flagging anything it
-  can't confirm rather than asserting it. `python -m openatlas.utils.verify_findings ...`.
-
-## Architecture
-
-```
-Input → pick function(s) → engine executes (free/local backend) → ToolResult
-     → logged to DB → optionally chain the next function → report
-```
-
-- `openatlas/core/registry.py` — `ToolRegistry` / `BaseTool` / `ToolSpec` / `ToolResult`.
-- `openatlas/methods/methods.yaml` — the validated function catalogue.
-- `openatlas/llm/ollama_client.py` — the only LLM path (local Ollama).
-- `openatlas/utils/robots.py` — the robots.txt guard every scraper routes through.
-- `openatlas/reasoning/loop.py` — ATLAS-inspired plan→execute→check→repair (AA mode).
-- `openatlas/browser/engine.py` — PyBA-style Playwright automation, reasoning via Ollama.
-- `openatlas/utils/knowledge_graph.py` + `openatlas/webserver/visualizer/` — session →
-  knowledge-graph exporter and the forked ATSMATRIX visualizer.
+- **Results depend on the target's real public footprint.** "Nothing found" is a valid,
+  reported outcome, and failed sources are listed with the reason.
+- **Some sites block anonymous access.** LinkedIn and Instagram only appear through
+  search snippets, and Reddit or GitHub (60 requests an hour) may rate-limit you. Run
+  `openatlas doctor --live` to see what works from your network.
+- **Some findings stay unverified.** Search snippets and Holehe results can't be
+  independently re-checked without logging in, so they are labelled as unverified.
 
 ## Testing
 
 ```bash
-make test     # pytest, all network/LLM mocked — never touches the internet
-make verify   # run the self-verifier over all 44 functions
+make test     # pytest - all network/LLM mocked, never goes online
 make lint     # ruff + secret/paid-key lint
+make verify   # self-verifier over all 44 functions
+make doctor   # verify the verification tools   (LIVE=1 to probe public sources)
+make skills   # lint every SKILL.md and run its commands
 ```
 
 ## Credits & licences
 
-Independent work inspired by OAtlas, PyBA, OpenJarvis (Apache-2.0) and ATLAS (AGPL-3.0);
-bundles a modified fork of the ATSMATRIX visualizer (MIT); uses the WhatsMyName dataset and
-optionally Holehe. See [NOTICE](NOTICE). MIT licensed.
-
-> **Sandbox note:** in a restricted cloud container the outbound proxy may block most
-> external hosts, so live lookups won't run there — run OpenAtlas on your own machine
-> (with network + optional Ollama) to exercise the engines end to end.
+Independent work inspired by OAtlas, PyBA, OpenJarvis (Apache-2.0) and ATLAS (AGPL-3.0).
+It bundles a modified fork of the ATSMATRIX visualizer (MIT) and uses the WhatsMyName
+dataset, and optionally Holehe. Wikipedia text is CC BY-SA 4.0. See [NOTICE](NOTICE).
+OpenAtlas itself is MIT licensed.
