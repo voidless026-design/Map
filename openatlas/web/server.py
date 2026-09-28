@@ -281,6 +281,10 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
         from openatlas.kb import kiwix, library
 
         data = await asyncio.to_thread(library.summary)
+        # a download left behind by a closed terminal / restart carries on when the app is open
+        if not data["paused"] and not library.running() and any(
+                b["status"] in ("queued", "downloading") for b in data["books"]):
+            library.start_background()
         return {**data, "kiwix": kiwix.status()}
 
     @app.get("/api/library/catalog")
@@ -299,6 +303,13 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
         needed = {"filename", "url", "book", "version"}
         if not needed <= set(book):
             raise HTTPException(422, f"catalog entry must have {sorted(needed)}")
+        if not library.is_kiwix_url(str(book.get("url", ""))):
+            raise HTTPException(422, "only .zim files from https://*.kiwix.org can be downloaded")
+        mine = await asyncio.to_thread(library.unfinished, book)
+        if mine:  # your own half-finished download: resume it rather than refuse it
+            await asyncio.to_thread(library.requeue, mine)
+            library.start_background()
+            return {"id": mine, "resumed": True}
         try:
             row_id = await asyncio.to_thread(library.enqueue, book)
         except library.Duplicate as exc:

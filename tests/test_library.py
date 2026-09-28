@@ -135,7 +135,9 @@ def test_catalog_marks_books_you_have(monkeypatch):
     library.enqueue(book("wikipedia_en_all_nopic_2026-01.zim"))
     library._set(1, status="ingested")
     assert library.catalog()[0]["status"] == "update"  # newer version available
-    library.enqueue(library.parse_catalog(OPDS)[0])
+    rid = library.enqueue(library.parse_catalog(OPDS)[0])
+    assert library.catalog()[0]["status"] == "resume"  # half-downloaded: offer to carry on
+    library._set(rid, status="ready")
     assert library.catalog()[0]["status"] == "have"
 
 
@@ -286,6 +288,85 @@ def test_resume_uses_range_and_gives_identical_file(monkeypatch):
         hashlib.sha256(data).hexdigest()
 
 
+# ------------------------------------------------- closed the terminal mid-download
+def _half_done(monkeypatch, name="wikipedia_en_all_nopic_2026-06.zim"):
+    """A download interrupted by closing the terminal: row left 'downloading', .part kept."""
+    data = bytes(range(256)) * 20_000
+    fake = FakeKiwix({name: data})
+    entry = _entry(1, name).replace(f'length="{1001}"', f'length="{len(data)}"')
+    feed = f'<feed xmlns="http://www.w3.org/2005/Atom">{entry}</feed>'.encode()
+
+    def handler(req):
+        if str(req.url).startswith(library.CATALOG):
+            return httpx.Response(200, content=feed)
+        return fake(req)
+
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(handler))
+    rid = library.enqueue(library.resolve(name[:-len("_2026-06.zim")]))
+    Path(library.get(rid)["path"] + ".part").write_bytes(data[:777_777])
+    library._set(rid, status="downloading", bytes_done=777_777)
+    return rid, data, fake
+
+
+@pytest.mark.parametrize("argv", [["get", "wikipedia_en_all_nopic", "--no-ingest"], ["resume"], ["resume", "1"]])
+def test_closed_terminal_download_resumes(monkeypatch, capsys, argv):
+    from openatlas import cli
+
+    rid, data, fake = _half_done(monkeypatch)
+    assert rid == 1
+    monkeypatch.setattr(library, "libzim_available", lambda: False)  # just the download here
+    assert cli.main(["kb", "library", *argv]) == 0
+    row = library.get(rid)
+    assert row["status"] == "ready" and row["note"] == "verified", capsys.readouterr().out
+    assert ("bytes=777777-" in [r for _, r in fake.requests])  # continued, not restarted
+    assert Path(row["path"]).read_bytes() == data
+    assert "not downloading" not in capsys.readouterr().out
+
+
+def test_finished_book_is_still_refused(monkeypatch, capsys):
+    from openatlas import cli
+
+    rid, _, _ = _half_done(monkeypatch)
+    library._set(rid, status="ingested")
+    assert cli.main(["kb", "library", "get", "wikipedia_en_all_nopic"]) == 0
+    assert "not downloading: already in library" in capsys.readouterr().out
+
+
+def test_second_process_cannot_append_to_the_same_part_file(monkeypatch):
+    rid, _, _ = _half_done(monkeypatch)
+    with library._exclusive(Path(library.get(rid)["path"])) as mine:
+        assert mine
+        assert library.download(rid) == "busy"  # another Atlas window holds it
+    assert library.download(rid) == "ready"
+
+
+def test_app_resumes_a_left_over_download(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from openatlas.kb import kiwix
+    from openatlas.web.server import create_app
+
+    rid, _, _ = _half_done(monkeypatch)
+    started = []
+    monkeypatch.setattr(kiwix, "binary", lambda: None)
+    monkeypatch.setattr(library, "start_background", lambda: started.append(1) or True)
+    with TestClient(create_app()) as c:
+        c.get("/api/library")
+    assert started
+    library._set(rid, status="paused")
+    store.set_meta("library_paused", True)
+    started.clear()
+    with TestClient(create_app()) as c:
+        c.get("/api/library")
+    assert not started  # paused on purpose: leave it
+
+
+def test_progress_line_shows_eta():
+    line = library.progress_line({"filename": "w.zim", "bytes_done": 12_400_000_000,
+                                  "size": 52_700_000_000, "speed": 8_100_000, "status": "downloading"})
+    assert "12.4 GB / 52.7 GB" in line and "23.5%" in line and "ETA 1h22m" in line
+
+
 def test_checksum_mismatch_deletes_the_file(monkeypatch):
     serve(monkeypatch, {"wikipedia_en_test_2026-01.zim": b"x" * 1000}, wrong_sha=True)
     rid = library.enqueue(book("wikipedia_en_test_2026-01.zim", 1000))
@@ -402,11 +483,16 @@ def test_web_library_api(monkeypatch):
     with TestClient(create_app()) as c:
         b = book("wikipedia_en_test_2026-01.zim")
         assert c.post("/api/library/get", json=b).status_code == 200
+        r = c.post("/api/library/get", json=b)  # still unfinished: resumes, not refused
+        assert r.status_code == 200 and r.json()["resumed"] is True
+        library._set(r.json()["id"], status="ready")
         r = c.post("/api/library/get", json=b)
         assert r.status_code == 409 and "already" in r.json()["detail"]
+        library._set(r_id := library.rows()[0]["id"], status="queued")
         assert c.post("/api/library/get", json={**b, "url": "https://evil.example/x.zim"}).status_code == 422
         state = c.get("/api/library").json()
         assert state["books"][0]["status"] == "queued" and state["kiwix"]["installed"] is False
+        assert r_id == state["books"][0]["id"]
         r = c.get("/kiwix/")
         assert r.status_code == 503 and "dnf install kiwix-tools" in r.text
         assert c.post(f"/api/library/{state['books'][0]['id']}/pause").json()["status"] == "paused"

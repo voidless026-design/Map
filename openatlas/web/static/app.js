@@ -447,7 +447,8 @@ async function searchCatalog() {
       : h("button", { class: "btn " + (b.status === "update" ? "" : "primary"), onclick: async (e) => {
           e.target.disabled = true;
           try { await api("/api/library/get", { method: "POST", body: JSON.stringify(b) }); toast(`Downloading ${b.filename}`); loadLibrary(); searchCatalog(); }
-          catch (err) { toast(err.message); e.target.disabled = false; } } }, b.status === "update" ? "Update ↑" : "Download")))));
+          catch (err) { toast(err.message); e.target.disabled = false; } } },
+          b.status === "update" ? "Update ↑" : b.status === "resume" ? "Resume ↻" : "Download")))));
 }
 $("#lib-go").addEventListener("click", searchCatalog);
 $("#lib-q").addEventListener("keydown", (e) => { if (e.key === "Enter") searchCatalog(); });

@@ -194,11 +194,15 @@ openatlas kb library get wikipedia_en_100           # 0.3 GB - a quick first tes
 openatlas kb library get wikipedia_en_all_nopic     # resumable, checksum-verified
 openatlas kb library list                   # progress; each book has a number, e.g. [1]
 openatlas kb library pause 1                # pause book 1 (no number: all downloads)
-openatlas kb library resume 1
+openatlas kb library resume                 # carry on after closing the terminal (all books)
+openatlas kb library resume --background    # same, but keeps going when you close the terminal
 openatlas kb library serve                  # Kiwix reader at http://127.0.0.1:8602/kiwix/
 ```
 
-- **Downloads resume** after a restart or dropped connection, from the `.part` file.
+- **Downloads resume** after a restart, a dropped connection or a closed terminal, from the `.part` file.
+  - Run `openatlas kb library resume`, run the same `get` again, or just open the app: the Library tab carries on by itself.
+  - Progress shows the size done, the speed and an ETA.
+  - Two windows can never write to the same file at once.
 - **Checksums.** Each file is checked against the **SHA-256 that Kiwix publishes** before it is used. A corrupted file is deleted.
 - **No duplicates.** A book already in the library is refused, whether it matches by id, file name, checksum, or an equal/newer version. A newer version of a book you already have counts as an update. The old file is removed only after the new one has verified and fed the brain.
 - **Hand-copied files.** `.zim` files you copy into `$OPENATLAS_DATA_DIR/library/` are picked up too, and follow the same rules.
