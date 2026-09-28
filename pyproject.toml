@@ -32,12 +32,13 @@ pypdf = ">=4"
 python-docx = ">=1"
 # Optional extras: pip install -e '.[voice]'  /  '.[kiwix]'
 faster-whisper = { version = ">=1.0", optional = true }
-webrtcvad-wheels = { version = "*", optional = true }
+# WebRTC VAD has no wheels for Python 3.14 yet; there the built-in voice detector is used
+webrtcvad-wheels = { version = "*", optional = true, python = "<3.14" }
 libzim = { version = "*", optional = true }
 
 [tool.poetry.extras]
 # E.V's speech recognition. Her Australian voice (MeloTTS EN-AU) lives in its own Python 3.11
-# venv - run `openatlas ev voice-setup` - because its pinned libraries don't install on 3.13.
+# venv - run `openatlas ev voice-setup` - because its pinned libraries don't install on 3.13+.
 voice = ["faster-whisper", "webrtcvad-wheels"]
 kiwix = ["libzim"]
 

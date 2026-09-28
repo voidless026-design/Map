@@ -24,7 +24,7 @@ publicly visible - OpenAtlas policy forbids those.
 
 ## Steps
 
-1. Install hearing: pip install -e '.[voice]' (faster-whisper).
+1. Install hearing: pip install -e '.[voice]' (faster-whisper). WebRTC VAD is optional; on Python 3.14 the built-in voice detector is used.
 2. Install her Australian voice: sudo dnf install python3.11, then openatlas ev voice-setup (creates a voice venv and plays a test phrase).
 3. In Atlas press the mic once and just talk; the System panel shows hear / think / speak times.
 

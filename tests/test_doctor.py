@@ -198,3 +198,16 @@ def test_installation_check_names_missing_packages(monkeypatch):
 def test_brain_check_self_tests_tricky_titles():
     status, detail = doctor.check_brain()
     assert status == "pass", detail
+
+
+def test_voice_extra_installs_on_new_python():
+    """webrtcvad-wheels has no Python 3.14 wheels; if the voice extra required it there, pip
+    would fail to build it and install nothing at all (the user's Fedora run)."""
+    import re
+    from pathlib import Path
+
+    from openatlas.config import Config
+
+    text = (Path(Config.files.project_root) / "pyproject.toml").read_text()
+    line = next(ln for ln in text.splitlines() if ln.startswith("webrtcvad-wheels"))
+    assert re.search(r'python\s*=\s*"<3\.14"', line) and "optional = true" in line
