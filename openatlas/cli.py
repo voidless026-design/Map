@@ -13,7 +13,7 @@ import json
 import sys
 from typing import Any, Dict, List, Optional
 
-COMMANDS = {"investigate", "plan", "run", "catalog", "serve", "cases", "kb", "doctor"}
+COMMANDS = {"investigate", "plan", "run", "catalog", "serve", "cases", "kb", "doctor", "ev"}
 
 
 def _kv(pairs: Optional[List[str]]) -> Dict[str, Any]:
@@ -466,6 +466,105 @@ def cmd_doctor(a: argparse.Namespace) -> int:
     return forge_doctor(a)
 
 
+def cmd_ev(a: argparse.Namespace) -> int:
+    from openatlas.ev import agent, memory, state, tools, voice
+    from openatlas.llm import ollama_client
+
+    op = a.ev_cmd
+    if op == "status":
+        d = ollama_client.diagnose()
+        v = voice.status()
+        m = state.mood()
+        print(f"E.V · mood {m['label']} · rapport {m['rapport']:.2f}")
+        print(f"  local model: {d['message']}")
+        print(f"  hearing: {'faster-whisper ready' if v['stt']['available'] else v['stt']['hint']}")
+        print(f"  voice:   {'MeloTTS ' + v['tts']['voice'] + ' ready' if v['tts']['available'] else v['tts']['hint']}")
+        return 0
+    if op == "voice-setup":
+        try:
+            py = voice.setup_sidecar()
+        except Exception as exc:
+            print(f"voice set-up stopped: {exc}")
+            return 1
+        print(f"voice environment ready: {py}")
+        tts = voice.SidecarTTS()
+        pcm = tts.synth("G'day! I'm E.V. My voice is all set up and running on your own computer.")
+        out = voice.voice_dir().parent / "voice-test.wav"
+        import wave
+
+        with wave.open(str(out), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(tts.rate)
+            w.writeframes(pcm)
+        tts.close()
+        print(f"test phrase saved: {out}  (play it with: xdg-open {out})")
+        return 0
+    if op == "memory":
+        if a.forget:
+            gone = memory.forget(a.forget)
+            print("forgot: " + ("; ".join(f["text"] for f in gone) if gone else "nothing matched"))
+            return 0
+        for f in memory.facts():
+            print(f"  [{f['id']}] {f['text']}")
+        if not memory.facts():
+            print("E.V doesn't remember anything about you yet. Say \"remember that ...\" to teach her.")
+        return 0
+    if op == "approvals":
+        for p in tools.pending():
+            print(f"  [{p['id']}] {p['tool']} {json.dumps(p['args'])}  risk: {p['risk']['level']} - {p['risk']['feeling']}")
+        if not tools.pending():
+            print("nothing waiting for approval")
+        return 0
+    if op in ("approve", "deny"):
+        try:
+            r = tools.decide(a.id, op == "approve")
+        except KeyError:
+            print(f"no approval with id {a.id} - see: openatlas ev approvals")
+            return 1
+        print(f"[{a.id}] {r['tool']}: {r['status']}")
+        if r.get("result"):
+            print(json.dumps(r["result"], indent=2, default=str)[:3000])
+        return 0 if r["status"] in ("done", "denied") else 1
+
+    def one(conv: Optional[int], text: str) -> int:
+        conv_id = conv
+        for ev in agent.respond(conv, text):
+            t = ev["type"]
+            if t == "start":
+                conv_id = ev["conv_id"]
+            elif t == "token":
+                print(ev["text"], end="", flush=True)
+            elif t == "tool":
+                print(f"\n  · {ev['skill']}: {ev['name']} {'ok' if ev['ok'] else ev.get('error')}", flush=True)
+            elif t == "approval":
+                print(f"\n  ? waiting for approval [{ev['id']}] {ev['tool']} ({ev['risk']['level']} risk) - "
+                      f"openatlas ev approve {ev['id']}", flush=True)
+            elif t == "notice":
+                print(f"\n  ! {ev['text']}", flush=True)
+            elif t == "qa":
+                c = ev["counts"]
+                print(f"\n  ✓ checked {ev['checked']} claim(s): {c['supported']} supported, "
+                      f"{c['unsupported']} unsupported, {c['unverified']} unverified", end="")
+        print()
+        return conv_id or 0
+
+    if a.message:
+        one(None, a.message)
+        return 0
+    print("E.V here - type to chat, Ctrl+D to leave.")
+    conv = None
+    while True:
+        try:
+            text = input("you › ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nsee ya!")
+            return 0
+        if text:
+            print("E.V › ", end="")
+            conv = one(conv, text)
+
+
 def build_parser() -> argparse.ArgumentParser:
     from openatlas.investigate.sources import FILTERS
 
@@ -575,6 +674,21 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("topic")
     ks.add_parser("where", help="where the brain and books are stored, and drives you could move them to")
     kb.set_defaults(func=cmd_kb)
+
+    ev = sub.add_parser("ev", help="E.V, your local AI companion: chat, voice set-up, memory")
+    es = ev.add_subparsers(dest="ev_cmd", required=True)
+    x = es.add_parser("chat", help="talk to E.V in the terminal (or send one message)")
+    x.add_argument("message", nargs="?", default="", help="one message; omit for a conversation")
+    es.add_parser("status", help="local model, voice and mood")
+    es.add_parser("voice-setup", help="install E.V's Australian voice (MeloTTS EN-AU) in its own venv")
+    x = es.add_parser("memory", help="what E.V remembers about you")
+    x.add_argument("--forget", default="", help="forget facts matching these words (or an id)")
+    es.add_parser("approvals", help="actions waiting for your approval")
+    x = es.add_parser("approve", help="approve (run) a pending action")
+    x.add_argument("id", type=int)
+    x = es.add_parser("deny", help="deny a pending action")
+    x.add_argument("id", type=int)
+    ev.set_defaults(func=cmd_ev)
 
     d = sub.add_parser("doctor", help="automatically verify every tool the skills use")
     d.add_argument("--live", action="store_true", help="also probe public sources from this network")

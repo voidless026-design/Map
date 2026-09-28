@@ -192,13 +192,32 @@ def check_local_ai() -> Tuple[str, str]:
     from openatlas.llm import ollama_client
     from openatlas.runtime.resources import detect
 
-    if not ollama_client.ping():
-        return "warn", "local AI (Ollama) offline - optional; start it with `ollama serve`"
+    # the model picker on fixtures first: a missing model must never become an HTTP 404 again
+    cases = [(["llama3.1:8b", "nomic-embed-text:latest"], "llama3.1:8b", "llama3.1:8b"),
+             (["llama3.1:latest"], "llama3.1:8b", "llama3.1:latest"),
+             (["qwen3:8b", "nomic-embed-text:latest", "llava:7b"], "llama3.1:8b", "qwen3:8b"),
+             (["nomic-embed-text:latest"], "llama3.1:8b", None), ([], "llama3.1:8b", None)]
+    saved = ollama_client._TAGS
+    try:
+        bad = []
+        for tags, want, expect in cases:
+            ollama_client._TAGS = (time.monotonic(), tags) if tags else (0.0, [])
+            if tags and ollama_client.resolve_model(want) != expect:
+                bad.append(f"{tags} -> {ollama_client.resolve_model(want)}")
+    finally:
+        ollama_client._TAGS = saved
+    if bad:
+        return _fail("model picker chose wrong: " + "; ".join(bad))
+    diag = ollama_client.diagnose()
+    if diag["reason"] == "not_running":
+        return "warn", "model picker verified; local AI (Ollama) offline - optional; start it with `ollama serve`"
+    if not diag["ok"]:
+        return "warn", "model picker verified; " + diag["message"]
     rep = ollama_client.gpu_report()
     cpu = [m["model"] for m in rep["models"] if not m["on_gpu"]]
     if detect().gpus and cpu:
         return "warn", f"GPU present but {', '.join(cpu)} running on CPU - check GPU drivers"
-    return _pass(f"online; profile models ready ({len(rep['models'])} loaded)")
+    return _pass(diag["message"] + f"; {len(rep['models'])} loaded")
 
 
 _BRAIN_FIXTURE = ("Doctor fixture: Topological quantum field theory",
@@ -337,6 +356,166 @@ def check_library() -> Tuple[str, str]:
     return ("warn", f"{detail}; {'; '.join(extras)}") if extras else _pass(detail)
 
 
+def _ev_sandbox():  # type: ignore[no-untyped-def]
+    """A throwaway brain + E.V store (persona, memory, approvals) for self-tests."""
+    from contextlib import contextmanager
+
+    from openatlas.ev import db as ev_db
+    from openatlas.kb import store
+
+    @contextmanager
+    def box():  # type: ignore[no-untyped-def]
+        with tempfile.TemporaryDirectory() as d, store.use_path(Path(d) / "brain.sqlite"):
+            ev_db.reset_init_cache()
+            try:
+                yield Path(d)
+            finally:
+                ev_db.reset_init_cache()
+    return box()
+
+
+def check_ev_gate() -> Tuple[str, str]:
+    """E.V's approval gate, ethics screen and risk simulation on fixtures."""
+    from openatlas.ev import tools
+
+    with _ev_sandbox():
+        r = tools.run("create_project", {"name": "doctor-probe", "kind": "notes", "path": "/nonexistent-doctor"})
+        gated = bool(r.get("pending")) and not Path("/nonexistent-doctor").exists()
+        risky = r.get("approval", {}).get("risk", {}).get("level") in ("medium", "high")
+        denied = tools.decide(r["approval"]["id"], False)["status"] == "denied" if gated else False
+        refused = bool(tools.run("search_brain", {"query": "bypass the paywall on example.com"}).get("refused"))
+        read_ok = tools.run("recall", {"query": "anything"}).get("ok") is True
+        n_tools, n_skills = len(tools.load_skills()), len(tools.skills())
+    checks = {"write needs approval": gated, "risk appraised": risky, "deny leaves it undone": denied,
+              "unethical request refused": refused, "read tools run": read_ok, "8 skills": n_skills == 8}
+    bad = [k for k, v in checks.items() if not v]
+    return _fail("; ".join(bad) + " - FAILED") if bad else \
+        _pass(f"{n_tools} tools in {n_skills} skills; writes/commands/network wait for approval; refusals work")
+
+
+def check_ev_qa() -> Tuple[str, str]:
+    """The claim checker must pass a supported claim and flag a planted false one."""
+    from openatlas.ev.skills import qa
+
+    src = [{"title": "Fixture", "text": "The Murray River is 2,508 kilometres long and flows into the Southern Ocean."}]
+    good = qa.check("The Murray River is 2,508 kilometres long and flows into the Southern Ocean [1].", src, use_model=False)
+    bad = qa.check("The Murray River is 9,000 kilometres long and flows into the Southern Ocean [1].", src, use_model=False)
+    none = qa.check("Platypuses were first described by Roman naturalists in the second century.", src, use_model=False)
+    ok = (good["counts"]["supported"] == 1 and bad["counts"]["unsupported"] == 1
+          and none["counts"]["unverified"] == 1)
+    return _pass("supported / unsupported (planted wrong number) / unverified all labelled correctly") if ok else \
+        _fail(f"claim checker mislabelled: {good['counts']} {bad['counts']} {none['counts']}")
+
+
+def check_ev_documents() -> Tuple[str, str]:
+    """Document Intelligence on fixture files: page-cited passages, folder limits enforced."""
+    import os
+
+    import docx
+
+    from openatlas.ev import tools
+
+    with _ev_sandbox() as d:
+        root = d / "docs"
+        root.mkdir()
+        doc = docx.Document()
+        doc.add_paragraph("Doctor fixture. The warranty period is 36 months from the purchase date.")
+        doc.save(str(root / "warranty.docx"))
+        (root / "notes.md").write_text("# Notes\n\nThe spare key is kept in the blue tin.\n")
+        (d / "outside.txt").write_text("secret")
+        old = os.environ.get("OPENATLAS_EV_DOC_ROOTS")
+        os.environ["OPENATLAS_EV_DOC_ROOTS"] = str(root)
+        try:
+            a = tools.run("read_document", {"path": "warranty", "question": "how long is the warranty"})
+            b = tools.run("read_document", {"path": "notes.md", "question": "where is the spare key"})
+            c = tools.run("read_document", {"path": str(d / "outside.txt")})
+        finally:
+            if old is None:
+                os.environ.pop("OPENATLAS_EV_DOC_ROOTS", None)
+            else:
+                os.environ["OPENATLAS_EV_DOC_ROOTS"] = old
+    ok = (a.get("ok") and "36 months" in a["passages"][0]["text"] and b.get("ok") and "blue tin" in b["passages"][0]["text"]
+          and not c.get("ok") and "outside the folders" in c.get("error", ""))
+    return _pass("Word + Markdown read with cited passages; a file outside the allowed folders is refused") if ok else \
+        _fail(f"document reader: {a.get('error') or ''} {b.get('error') or ''} {c}")
+
+
+def check_ev_voice() -> Tuple[str, str]:
+    """Voice pipeline pieces on fixtures: end-of-speech detection, early sentence cut, and the
+    voice worker's protocol + latency (with its tone generator standing in for MeloTTS)."""
+    import math
+    import os
+    import struct
+    import sys
+
+    from openatlas.ev import voice
+
+    ep = voice.Endpointer()
+    ep.vad = None
+    step = voice.IN_RATE * voice.FRAME_MS // 1000 * 2
+    tone = b"".join(struct.pack("<h", int(9000 * math.sin(2 * math.pi * 220 * i / voice.IN_RATE)))
+                    for i in range(voice.IN_RATE * 600 // 1000))
+    audio = b"\x00\x00" * 3200 + tone + b"\x00\x00" * (voice.IN_RATE * (voice.END_SILENCE_MS + 60) // 1000)
+    utt = [r["utterance"] for r in (ep.feed(audio[i:i + step]) for i in range(0, len(audio), step)) if r["utterance"]]
+    sp = voice.SentenceSplitter()
+    first = sp.push("G'day! ") + sp.push("How can I help you today? ")
+    env = {k: os.environ.get(k) for k in ("OPENATLAS_EV_TTS_PYTHON", "OPENATLAS_EV_TTS_FAKE")}
+    os.environ.update({"OPENATLAS_EV_TTS_PYTHON": sys.executable, "OPENATLAS_EV_TTS_FAKE": "1"})
+    try:
+        tts = voice.SidecarTTS()
+        t0 = time.monotonic()
+        pcm = tts.synth("Testing one two three.")
+        ms = round((time.monotonic() - t0) * 1000)
+        tts.close()
+    finally:
+        for k, v in env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+    ok = len(utt) == 1 and first and first[0].startswith("G'day") and len(pcm) > 0 and ms < 1500
+    if not ok:
+        return _fail(f"voice pipeline: utterances={len(utt)} first={first} pcm={len(pcm)} ms={ms}")
+    st = voice.status()
+    missing = [x for x, v in (("pip install -e '.[voice]'", st["stt"]["available"]),
+                              ("openatlas ev voice-setup", st["tts"]["available"])) if not v]
+    detail = f"end-of-speech, early sentence and worker protocol verified ({ms} ms per sentence, fake voice)"
+    return ("warn", f"{detail}; to talk with E.V: {' and '.join(missing)}") if missing else _pass(detail)
+
+
+def check_brain3d() -> Tuple[str, str]:
+    """The 3D brain builder on a throwaway brain: every link resolves, the node cap holds."""
+    from openatlas.kb import store
+    from openatlas.utils import knowledge_graph
+
+    with _ev_sandbox():
+        store.upsert_many([{"key": f"doctor:{i}", "source": "wikipedia", "title": f"Doctor topic {i}",
+                            "text": "fixture " * 30, "tags": ["domain:formal-sciences", "area:logic", "tier:0"]}
+                           for i in range(80)])
+        g = knowledge_graph.build_brain3d(limit=50)
+    ids = {n["id"] for n in g["nodes"]}
+    neurons = [n for n in g["nodes"] if n["kind"] == "neuron"]
+    ok = len(neurons) == 50 and all(ln["source"] in ids and ln["target"] in ids for ln in g["links"]) \
+        and g["meta"]["articles"] == 80
+    return _pass(f"{len(g['nodes'])} nodes / {len(g['links'])} links, capped at 50 of 80 neurons") if ok else \
+        _fail(f"3D builder: {len(neurons)} neurons, meta {g['meta']}")
+
+
+def check_ev_persona() -> Tuple[str, str]:
+    """E.V's prompt carries all nine traits + guardrails; her simulated mood self-regulates."""
+    from openatlas.ev import persona, state
+
+    with _ev_sandbox():
+        p = persona.system_prompt(mood={"label": "steady"}, facts=[])
+        t = time.time()
+        state.appraise("this is broken and useless, ugh", now=t)
+        later = state.regulate(state.load(), now=t + 7200)
+    ok = all(tr.label in p for tr in persona.TRAITS) and "You are an AI" in p and "Australian" in p \
+        and abs(later["valence"] - state.BASELINE["valence"]) < 0.05
+    return _pass("9 traits + guardrails in the prompt; mood returns to baseline") if ok else \
+        _fail("persona prompt or self-regulation broken")
+
+
 CHECKS: List[Check] = [
     ("Schema validator", check_schema_validator),
     ("ToolResult validator", check_toolresult_validator),
@@ -351,6 +530,12 @@ CHECKS: List[Check] = [
     ("Brain retrievability", check_brain),
     ("Search relevance", check_search_relevance),
     ("Kiwix library", check_library),
+    ("E.V approval gate", check_ev_gate),
+    ("E.V quality check (claims)", check_ev_qa),
+    ("E.V document reader", check_ev_documents),
+    ("E.V voice pipeline", check_ev_voice),
+    ("E.V persona", check_ev_persona),
+    ("3D brain builder", check_brain3d),
 ]
 
 

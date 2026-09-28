@@ -16,6 +16,7 @@ venv/
 data/openatlas.db
 data/brain/
 data/library/
+data/ev/
 output/
 data/robots_cache/*
 !data/robots_cache/.gitkeep

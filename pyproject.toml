@@ -27,6 +27,19 @@ uvicorn = ">=0.29"
 # Offline phone-number parsing and RAM/GPU-aware resource limits
 phonenumbers = "*"
 psutil = "*"
+# E.V's Document Intelligence (pure Python, small)
+pypdf = ">=4"
+python-docx = ">=1"
+# Optional extras: pip install -e '.[voice]'  /  '.[kiwix]'
+faster-whisper = { version = ">=1.0", optional = true }
+webrtcvad-wheels = { version = "*", optional = true }
+libzim = { version = "*", optional = true }
+
+[tool.poetry.extras]
+# E.V's speech recognition. Her Australian voice (MeloTTS EN-AU) lives in its own Python 3.11
+# venv - run `openatlas ev voice-setup` - because its pinned libraries don't install on 3.13.
+voice = ["faster-whisper", "webrtcvad-wheels"]
+kiwix = ["libzim"]
 
 # ---- Optional groups: install only what you need, none require a paid key ----
 
@@ -63,6 +76,7 @@ deepface = "*"
 [tool.poetry.group.dev.dependencies]
 pytest = "*"
 ruff = "*"
+fpdf2 = "*"  # builds a fixture PDF in tests/test_ev.py
 
 [tool.poetry.scripts]
 openatlas = "openatlas.main:main"

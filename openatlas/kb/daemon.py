@@ -39,6 +39,9 @@ def main() -> int:
     for sig in (signal.SIGINT, signal.SIGTERM):
         signal.signal(sig, lambda *_: stop.set())
     log.info("brain daemon started (data: %s)", store.db_path())
+    from openatlas.ev.skills import workflows
+
+    workflows.start_scheduler()  # E.V's approved routines run here too
     asyncio.run(loop(stop))
     store.set_meta("worker", {"state": "stopped", "at": store.now()})
     return 0

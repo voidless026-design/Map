@@ -122,3 +122,65 @@ def _no_llm(monkeypatch):
 
     monkeypatch.setattr(ollama_client, "ping", lambda *a, **k: False)
     monkeypatch.setattr(ollama_client, "available", lambda *a, **k: False)
+    monkeypatch.setattr(ollama_client, "_TAGS", (0.0, []))
+
+
+class FakeOllama:
+    """A local Ollama stand-in: /api/tags, /api/ps, streaming /api/chat (NDJSON).
+
+    ``replies`` is a queue; each item is a string (streamed as a few tokens) or
+    ``{"tool_calls": [...]}``. Unknown models get 404, exactly like the real server."""
+
+    def __init__(self, models=("llama3.1:8b",), replies=None, tools_ok=True):
+        self.models, self.replies, self.tools_ok = list(models), list(replies or []), tools_ok
+        self.requests = []
+
+    def __call__(self, req):
+        import json as _json
+
+        import httpx
+
+        path = req.url.path
+        body = _json.loads(req.content or b"{}") if req.method == "POST" else {}
+        self.requests.append((path, body))
+        if path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": m} for m in self.models]})
+        if path == "/api/ps":
+            return httpx.Response(200, json={"models": []})
+        if path == "/api/chat":
+            if body.get("model") not in self.models:
+                return httpx.Response(404, json={"error": f"model '{body.get('model')}' not found"})
+            if body.get("tools") and not self.tools_ok:
+                return httpx.Response(400, json={"error": "does not support tools"})
+            reply = self.replies.pop(0) if self.replies else "G'day! How can I help?"
+            if isinstance(reply, dict):
+                lines = [{"message": {"role": "assistant", "content": "", **reply}, "done": False}]
+            else:
+                words = reply.split(" ")
+                lines = [{"message": {"role": "assistant", "content": w + (" " if i < len(words) - 1 else "")},
+                          "done": False} for i, w in enumerate(words)]
+            lines.append({"message": {"role": "assistant", "content": ""}, "done": True})
+            if not body.get("stream", True):
+                text = "" if isinstance(reply, dict) else reply
+                return httpx.Response(200, json={"message": {"role": "assistant", "content": text,
+                                                             **(reply if isinstance(reply, dict) else {})}})
+            return httpx.Response(200, content="\n".join(_json.dumps(x) for x in lines).encode())
+        if path == "/api/generate":
+            return httpx.Response(200, json={})
+        return httpx.Response(404)
+
+
+@pytest.fixture
+def fake_ollama(monkeypatch):
+    """Opt in to a running local Ollama (fake). Adjust ``.models`` / ``.replies`` in the test."""
+    import httpx
+
+    from openatlas.llm import ollama_client
+    from openatlas.runtime import limits
+
+    fake = FakeOllama()
+    monkeypatch.setattr(ollama_client, "TRANSPORT", httpx.MockTransport(fake))
+    monkeypatch.setattr(ollama_client, "ping", lambda *a, **k: True)
+    monkeypatch.setattr(ollama_client, "available", lambda *a, **k: True)
+    monkeypatch.setattr(limits, "memory_ok", lambda *a, **k: (True, ""))
+    return fake

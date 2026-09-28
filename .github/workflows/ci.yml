@@ -36,7 +36,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e .
-          pip install pytest ruff
+          pip install pytest ruff fpdf2
           pip install libzim   # real ZIM round-trips in tests/test_library.py
 
       - name: Lint (ruff)

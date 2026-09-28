@@ -35,6 +35,7 @@ refuses to call anything finished until the checks are green.
 - "Create a skill that investigates a username end-to-end." -> `new-skill`
 - "Turn my 'curate the brain' routine into a reusable skill." -> `new-skill`
 - "Make a skill that checks Atlas's answers are on-topic." -> `new-skill` (this is how `search-quality` was made)
+- "Give E.V a skill for reading my contracts / planning / decisions." -> `new-skill` (how E.V's eight skills and `ev-voice` were made)
 - "Do all our skills and their tools still work?" -> `verify-skill --all` + `doctor`
 
 Do **not** trigger it to *run* an existing function (use `openatlas run <slug> <value>`),
@@ -78,7 +79,7 @@ python -m openatlas.utils.forge new-skill --name username-deep-dive \
   --tool "openatlas/investigate/verify.py - automatic re-checks"
 ```
 
-`osint-investigate`, `kb-curate`, `search-quality` and `kb-library` in this repo were generated exactly this way. If the
+`osint-investigate`, `kb-curate`, `search-quality`, `kb-library`, E.V's eight skills (`document-intelligence`, `project-setup`, `research-synthesis`, `workflow-automation`, `context-continuity`, `interactive-planning`, `quality-assurance`, `decision-support`) and `ev-voice` were generated exactly this way. If the
 lint fails, fix the draft and run `python -m openatlas.utils.forge verify-skill <name>`;
 it is promoted as soon as it passes.
 
@@ -120,7 +121,15 @@ python -m pytest -q
    downloads a fixture book through a fake server with an interrupted transfer, and
    requires the resumed file to hash the same as a straight download. It also requires a
    duplicate to be refused, a newer version to count as an update, and a corrupted file
-   to be rejected. `doctor --live` also probes each public source once from your
+   to be rejected. E.V's tools are verified the same way:
+   - **Approval gate:** a write must wait for approval, carry a risk appraisal, and stay undone when denied. An unethical request must be refused.
+   - **Claim checker:** it must pass a supported claim and flag a planted wrong number as unsupported.
+   - **Document reader:** it must quote the right passage from Word and Markdown fixtures, and refuse a file outside the allowed folders.
+   - **Voice pipeline:** it must detect the end of speech, speak the first sentence early, and answer through the worker protocol within the latency budget.
+   - **3D brain builder:** every link must resolve and the neuron cap must hold.
+   - **Persona:** all nine traits and the guardrails must be in E.V's prompt, and her mood must settle back to baseline.
+   - **Model picker:** it must choose an installed model instead of asking Ollama for one it doesn't have, which is what caused the "HTTP 404".
+   `doctor --live` also probes each public source once from your
    network and reports which ones answer.
 
 Report the JSON/summary back. If any check fails, fix and re-run - never report
@@ -142,6 +151,12 @@ success on a failing check.
 | Brain store + search | `openatlas/kb/store.py`, `openatlas/kb/retrieve.py` | Skills that answer from the brain get cited, retrievable passages. |
 | Relevance evaluator | `openatlas/kb/evaluate.py` (`openatlas kb eval`) | P@1 / MRR@5 / nDCG@5 / off-topic rate on a look-alike corpus and on your own brain, so you no longer judge by hand whether cited articles fit the question. |
 | Kiwix library verifier | `openatlas/kb/library.py` (`openatlas kb library verify`) | Multi-GB books are SHA-256-checked against Kiwix's published checksum before going live; duplicates are refused. |
+| Local model picker | `openatlas/llm/ollama_client.py` (`resolve_model`, `diagnose`) | Uses a model you actually have installed and says exactly what to run when none is, instead of a misleading 404. |
+| Claim checker | `openatlas/ev/skills/qa.py` | Labels every factual sentence supported / unsupported / unverified against its sources, which replaces checking an AI's answer by hand. |
+| Approval gate + risk simulation | `openatlas/ev/tools.py` | Network, write and command tools wait for your OK, with a worst-case read-out. Unethical requests are refused. |
+| Document reader | `openatlas/ev/skills/documents.py` | Page-cited passages from your own files, limited to folders you allow. |
+| Voice pipeline | `openatlas/ev/voice.py`, `openatlas/ev/tts_worker.py` | Local hearing and the Australian voice, with the latency measured every turn. |
+| 3D brain builder | `openatlas/utils/knowledge_graph.py` (`build_brain3d`) + `/viz/brain3d` | Every neuron can be inspected, so you can see what the brain knows and how it connects. |
 | Knowledge-graph visualizer | `openatlas/utils/knowledge_graph.py` (ATSMATRIX) | Shows a case's evidence or the brain's growth as a graph, so cross-links and gaps are visible instead of re-checked by hand. |
 | Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 

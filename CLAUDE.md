@@ -54,6 +54,15 @@ must both pass (CI runs them).
   sources, a human presses Run) and `check_case` (post-case check + one repair round). Local AI when
   available, deterministic heuristic otherwise.
 - `openatlas/web/` - FastAPI + no-build SPA (`openatlas serve`, loopback only).
+  - The home page is E.V's chat (`static/ev.js`). `web/ev_routes.py` has the `/api/ev/*` endpoints and the `/ws/ev/voice` WebSocket.
+  - `/viz/brain3d` (`static/brain3d.{html,js}`) is the 3D brain, built from `knowledge_graph.build_brain3d`. Its vendored bundle (`static/vendor/`) is rebuilt with `tools/build_brain3d_vendor.sh`; don't hand-edit it.
+- `openatlas/ev/` - E.V, the local AI companion.
+  - `persona.py` holds the nine trait dials and the fixed guardrails. `state.py` is her simulated mood and trust, with self-regulation. `memory.py` handles context continuity.
+  - `agent.py` runs the streaming turn: Ollama tool calls, a keyword router when the model can't call tools, and an offline fallback. `tools.py` has the registry, approval gate, ethics screen and risk appraisal.
+  - `skills/*` are the eight skills. Only `read` tools auto-run; `network`, `write` and `command` tools always go through `tools.decide`.
+  - `voice.py` handles endpointing, sentence streaming and barge-in. `tts_worker.py` is MeloTTS EN-AU in its own py3.11 venv (`openatlas ev voice-setup`).
+  - New E.V skills are generated with `forge new-skill`, and the doctor verifies their tools.
+- `openatlas/llm/ollama_client.py` always resolves the model against `/api/tags` (`resolve_model` / `diagnose`). Never hard-code a model name that might not be pulled.
 - `openatlas/cli.py` - `investigate|run|catalog|serve|cases|kb|doctor`; `openatlas/catalog.py`
   gives every action a human title + kebab slug (no underscores in titles).
 - `openatlas/runtime/` - resource profiles, LLM gate, memory guard. Any heavy model load

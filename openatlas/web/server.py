@@ -136,6 +136,36 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
         graph = await asyncio.to_thread(knowledge_graph.build_graph_from_brain)
         return HTMLResponse(knowledge_graph.inline_html(graph))
 
+    @app.get("/viz/brain3d", response_class=HTMLResponse)
+    async def viz_brain3d() -> FileResponse:
+        """The brain as a customizable 3D space of neurons (data from /api/brain/graph3d)."""
+        return FileResponse(STATIC / "brain3d.html")
+
+    @app.get("/api/brain/graph3d")
+    async def brain_graph3d(limit: int = 3000) -> Dict[str, Any]:
+        from openatlas.utils import knowledge_graph
+
+        return await asyncio.to_thread(knowledge_graph.build_brain3d, limit)
+
+    @app.get("/api/brain/article")
+    async def brain_article(key: str) -> Dict[str, Any]:
+        from openatlas.kb import store
+
+        def read() -> Optional[Dict[str, Any]]:
+            with store.connect() as con:
+                d = con.execute("SELECT id, key, title, url, license, source FROM documents WHERE key=?", (key,)).fetchone()
+                if not d:
+                    return None
+                text = "\n\n".join(r["text"] for r in con.execute(
+                    "SELECT text FROM chunks WHERE doc_id=? ORDER BY ord LIMIT 40", (d["id"],)))
+                aliases = [r["title"] for r in con.execute(
+                    "SELECT title FROM titles WHERE doc_id=? AND kind='alias' LIMIT 20", (d["id"],))]
+            return {**dict(d), "text": text, "aliases": aliases}
+        got = await asyncio.to_thread(read)
+        if not got:
+            raise HTTPException(404, "no such article")
+        return got
+
     @app.get("/viz/{case_id}", response_class=HTMLResponse)
     async def viz(case_id: str) -> HTMLResponse:
         from openatlas.core.database import db_funcs
@@ -409,6 +439,9 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
 
         return await asyncio.to_thread(doctor.run_all)
 
+    from openatlas.web import ev_routes
+
+    ev_routes.register(app, token)
     return app
 
 
@@ -442,5 +475,8 @@ def serve(host: str = "127.0.0.1", port: int = 8600, open_browser: bool = True,
             webbrowser.open(url)
         except Exception:
             pass
+    from openatlas.ev.skills import workflows
+
+    workflows.start_scheduler()  # E.V's approved routines run while Atlas is open
     uvicorn.run(create_app(token=token, loopback=loop), host=host, port=port, log_level="warning")
     return 0

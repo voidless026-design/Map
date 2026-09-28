@@ -5,7 +5,25 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   const b = await chromium.launch({ executablePath: process.env.CHROME || undefined });
   const p = await b.newPage({ viewport: { width: 1360, height: 900 } });
   const errs = []; p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => m.type() === "error" && errs.push(m.text()));
-  await p.goto("http://127.0.0.1:8611/"); await p.waitForSelector("#filters button");
+  await p.goto("http://127.0.0.1:8611/"); await p.waitForSelector("#welcome");
+  await p.screenshot({ path: out + "/0-chat-home.png" });
+
+  // E.V chat is home: skills run, cards are interactive, answers are checked
+  ok(await p.isVisible("#welcome") && (await p.$$("#suggest button")).length === 4, "E.V welcome with suggestions");
+  await p.fill("#chat-input", "help me plan my week"); await p.keyboard.press("Enter");
+  await p.waitForSelector(".plan-step", { timeout: 15000 });
+  ok((await p.$$(".plan-step")).length === 5, "Interactive Planning card with 5 steps");
+  await p.click(".plan-step input[type=checkbox] >> nth=0"); await p.waitForSelector("text=1/5 done");
+  ok(true, "ticking a step saves it (1/5 done)");
+  ok((await p.textContent("#conv-list")).includes("help me plan my week"), "conversation listed in the sidebar");
+  await p.fill("#chat-input", "What is World War II?"); await p.keyboard.press("Enter");
+  await p.waitForFunction(() => { const m = document.querySelectorAll(".msg.ev"); return m.length >= 2 && m[m.length - 1].querySelectorAll(".xray span").length >= 1; }, null, { timeout: 15000 });
+  ok((await p.textContent("#messages")).includes("Research Synthesis"), "brain search used for a question");
+  ok((await p.textContent("#messages")).includes("World War II"), "answer comes from the brain");
+  await p.screenshot({ path: out + "/0b-chat.png" });
+  await p.click("[data-view='settings']"); await p.waitForSelector(".dial");
+  ok((await p.$$(".dial")).length === 9, "nine personality dials in Settings");
+  await p.click("[data-view='investigate']"); await p.waitForSelector("#filters button");
   await p.screenshot({ path: out + "/1-empty.png" });
 
   await p.fill("#q", "jdoe_42"); await p.waitForFunction(() => document.querySelector("#type-btn").textContent !== "auto");
@@ -66,6 +84,18 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   const g = await viz.evaluate(() => window.ATLAS_GRAPH && { n: window.ATLAS_GRAPH.nodes.length, src: window.ATLAS_GRAPH.meta.source });
   ok(g && g.src === "OpenAtlas brain" && g.n >= 15, "Brain graph opens the visualizer with the brain: " + JSON.stringify(g));
   await viz.screenshot({ path: out + "/6-brain-graph.png" }); await viz.close();
+  // 3D brain: neurons load, a neuron can be inspected, customizations persist
+  const [b3] = await Promise.all([p.context().waitForEvent("page"), p.click("#brain-3d")]);
+  await b3.waitForFunction(() => window.BRAIN3D && window.BRAIN3D.data, null, { timeout: 30000 });
+  const n3 = await b3.evaluate(() => window.BRAIN3D.data.nodes.filter((n) => n.kind === "neuron").length);
+  ok(n3 >= 1000, "3D brain loaded " + n3 + " neurons");
+  await b3.evaluate(() => window.BRAIN3D.select(window.BRAIN3D.data.nodes.find((n) => n.kind === "neuron" && n.degree > 2).id));
+  await b3.waitForSelector("#insp:not(.hidden)");
+  ok((await b3.textContent("#insp-title")).length > 2 && (await b3.$$("#insp-nbrs button")).length >= 1, "clicking a neuron opens the inspector with its connections");
+  await b3.click("#presets button:has-text('Nebula')"); await b3.reload();
+  await b3.waitForFunction(() => window.BRAIN3D && window.BRAIN3D.data, null, { timeout: 30000 });
+  ok((await b3.evaluate(() => window.BRAIN3D.settings().preset)) === "Nebula", "customization persists across reloads");
+  await b3.waitForTimeout(2500); await b3.screenshot({ path: out + "/6b-brain3d.png" }); await b3.close();
   await p.emulateMedia({ colorScheme: "light" }); await p.click("#theme"); await p.waitForTimeout(200);
   await p.screenshot({ path: out + "/5-light.png" });
   const idle = await p.evaluate(async () => { let frames = 0; const t0 = performance.now();
