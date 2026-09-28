@@ -11,6 +11,7 @@ reports which ones answer (this is the only part that uses the internet).
 from __future__ import annotations
 
 import asyncio
+import re
 import tempfile
 import time
 from pathlib import Path
@@ -398,14 +399,18 @@ _IMPORT_NAME = {"dnspython": "dns", "beautifulsoup4": "bs4", "pillow": "PIL", "p
 
 def core_dependencies() -> List[str]:
     """Required (non-optional) packages from this checkout's pyproject.toml."""
-    try:
-        import tomllib
-    except ImportError:  # Python 3.10
-        return []
     pyproject = Path(Config.files.project_root) / "pyproject.toml"
     if not pyproject.exists():
         return []
-    deps = tomllib.loads(pyproject.read_text())["tool"]["poetry"]["dependencies"]
+    text = pyproject.read_text()
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10: the table is flat `name = spec` lines, read them directly
+        body = re.search(r"^\[tool\.poetry\.dependencies\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+        lines = [ln.split("#", 1)[0].strip() for ln in (body.group(1) if body else "").splitlines()]
+        return [ln.split("=", 1)[0].strip().strip('"') for ln in lines
+                if "=" in ln and not ln.startswith("python ") and not re.search(r"optional\s*=\s*true", ln)]
+    deps = tomllib.loads(text)["tool"]["poetry"]["dependencies"]
     return [n for n, spec in deps.items() if n != "python" and not (isinstance(spec, dict) and spec.get("optional"))]
 
 
