@@ -26,7 +26,7 @@ publicly visible - OpenAtlas policy forbids those.
 
 1. Find the book: `openatlas kb library catalog wikipedia` (words) or `openatlas kb library catalog wikipedia_en_all` (a name - lists maxi / nopic / mini), or the Library tab's search. Rows already in the library show In library.
 2. Download it by name, e.g. `openatlas kb library get wikipedia_en_all_nopic` (the newest version is picked; a name that fits several books lists them to choose from). A duplicate is refused with the reason; an older copy makes this an update. Never write placeholders like <id> in commands for the user - give the real name or number.
-3. Watch progress with `openatlas kb library list` (each book has a number in brackets); `openatlas kb library pause 1` / `resume 1` for one book, or no number for all. Downloads resume from the .part file after a restart.
+3. Watch progress with `openatlas kb library list` (each book has a number in brackets); `openatlas kb library pause 1` / `resume 1` for one book, or no number for all. Closed the terminal mid-download? `openatlas kb library resume` (or `resume --background` to survive closing it again), the same `get`, or opening the app all continue from the .part file - never from zero.
 4. Once verified, the book feeds the brain in batches of 500 articles (openatlas kb library ingest runs it now); Wikipedia articles update the ones already learned instead of duplicating them.
 5. Storage: `openatlas kb where` shows the data folder, free space and a ready-to-paste line for each mounted drive.
 6. Read it inside Atlas: openatlas kb library serve (needs kiwix-serve: sudo dnf install kiwix-tools) or the Read button in the Library tab.
@@ -38,6 +38,7 @@ openatlas kb library catalog wikipedia_en_all
 openatlas kb library get wikipedia_en_all_nopic
 openatlas kb library list
 openatlas kb library pause 1
+openatlas kb library resume --background
 openatlas kb library ingest
 openatlas kb library verify
 openatlas kb library serve
@@ -56,8 +57,9 @@ python -m openatlas.utils.forge doctor
 2. Asking for the same book again (same uuid, file name, checksum, or an equal/newer version) is refused; only an older copy allows an update, and the old file is removed only after the new one verified and was ingested.
 3. After ingest, openatlas kb search for a few article titles from the book returns them first (openatlas kb eval samples this).
 4. The doctor's 'Kiwix library' check passes: a resumed download hashes identically to a straight one, duplicates are refused, an update is detected and a corrupted file is rejected.
-5. A book name resolves to the newest file even when it is past the first catalog page, and an ambiguous name lists the choices instead of guessing.
-6. pytest tests/test_library.py passes offline.
+5. A download interrupted by closing the terminal resumes from its .part file (HTTP Range) with `get`, `resume` or `resume 1`, and a second process is refused the same .part file.
+6. A book name resolves to the newest file even when it is past the first catalog page, and an ambiguous name lists the choices instead of guessing.
+7. pytest tests/test_library.py passes offline.
 
 ## Tools this skill needs
 

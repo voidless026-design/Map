@@ -294,6 +294,56 @@ def _kb_where() -> int:
     return 0
 
 
+def _follow(library: Any, run: Any) -> Any:
+    """Run a download/ingest in the foreground with a live progress line; Ctrl+C pauses it cleanly."""
+    import threading
+
+    done = threading.Event()
+    tty = sys.stdout.isatty()
+
+    def show() -> None:
+        last = ""
+        while not done.wait(5 if tty else 30):
+            live = [r for r in library.rows() if r["status"] in ("downloading", "ingesting")]
+            for r in live:
+                line = library.progress_line(r) if r["status"] == "downloading" else \
+                    f"{r['filename']}  feeding the brain {r['ingested'] or 0:,} articles"
+                if line != last:
+                    print(("\r" + line.ljust(100)) if tty else line, end="" if tty else "\n", flush=True)
+                    last = line
+        if tty and last:
+            print()
+
+    t = threading.Thread(target=show, daemon=True)
+    t.start()
+    try:
+        return run()
+    except KeyboardInterrupt:
+        for r in library.rows():
+            if r["status"] == "downloading":
+                library.control(r["id"], "pause")
+        print("\npaused - carry on later with: openatlas kb library resume")
+        return "paused"
+    finally:
+        done.set()
+        t.join(timeout=1)
+
+
+def _background(library: Any) -> int:
+    """Detach `kb library ingest` from the terminal so closing it doesn't stop the download."""
+    import subprocess
+
+    log = library.library_dir() / "download.log"
+    with open(log, "ab") as fh:
+        proc = subprocess.Popen([sys.executable, "-m", "openatlas.cli", "kb", "library", "ingest"],
+                                stdout=fh, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                                start_new_session=True)
+    print(f"downloading in the background (process {proc.pid}); you can close this terminal.")
+    print(f"  progress:  openatlas kb library list      log: tail -f {log}")
+    print(f"  stop it:   openatlas kb library pause     (or: kill {proc.pid})")
+    return 0
+
+
 def _kb_library(a: argparse.Namespace) -> int:
     """Kiwix library: offline encyclopedias for the brain (multi-GB, verified, no duplicates)."""
     from openatlas.kb import kiwix, library, store
@@ -329,38 +379,66 @@ def _kb_library(a: argparse.Namespace) -> int:
             if not exc.choices:
                 print("see what exists with: openatlas kb library catalog wikipedia")
             return 1
-        try:
-            row_id = library.enqueue(book)
-        except library.Duplicate as exc:
-            print(f"not downloading: {exc}")
+        row_id = library.unfinished(book)
+        if row_id:  # your own half-finished download of this file: carry on, don't refuse it
+            library.requeue(row_id)
+            print(f"resuming {book['filename']} from {_size(library.get(row_id)['bytes_done'])} "
+                  f"of {_size(book['size'])} - Ctrl+C pauses")
+        else:
+            try:
+                row_id = library.enqueue(book)
+            except library.Duplicate as exc:
+                print(f"not downloading: {exc}")
+                return 0
+            print(f"downloading {book['filename']} ({_size(book['size'])}) - Ctrl+C pauses, "
+                  "openatlas kb library resume carries on")
+        status = _follow(library, lambda: library.download(row_id))
+        if status == "busy":
+            print("another Atlas window is already downloading it - watch it with: openatlas kb library list")
             return 0
-        print(f"downloading {book['filename']} ({_size(book['size'])}) - Ctrl+C pauses, run again to resume")
-        try:
-            status = library.download(row_id)
-        except KeyboardInterrupt:
-            library.control(row_id, "pause")
-            print("paused")
+        if status == "paused":
             return 0
         print(f"{book['filename']}: {status} - {(library.get(row_id) or {}).get('note', '')}")
         if status == "ready" and not a.no_ingest:
             print("feeding the brain (resumable) ...")
-            print(library.ingest(row_id))
+            print(_follow(library, lambda: library.ingest(row_id)))
         return 0 if status == "ready" else 1
     if op == "ingest":
         library.adopt_existing()
-        library.work()
+        _follow(library, library.work)
         return 0
     if op in ("pause", "resume"):
         if a.id is not None:
             if library.get(a.id) is None:
                 return _no_book(library, a.id)
-            row = library.control(a.id, op)
-            print(f"[{a.id}] {row['filename']}: {row['status']}")
+            if op == "pause":
+                row = library.control(a.id, op)
+                print(f"[{a.id}] {row['filename']}: {row['status']}")
+                return 0
+            library.requeue(a.id)
+            store.set_meta("library_paused", False)
+            if a.background:
+                return _background(library)
+            print(f"resuming [{a.id}] {library.get(a.id)['filename']} here - Ctrl+C pauses")
+            _follow(library, library.work)
             return 0
-        store.set_meta("library_paused", op == "pause")
-        if op == "resume":
-            library.start_background()
-        print(f"library downloads {op}d (all books)")
+        if op == "pause":
+            store.set_meta("library_paused", True)
+            for r in library.rows():
+                if r["status"] in ("queued", "downloading"):
+                    library.control(r["id"], "pause")
+            print("library downloads paused (all books)")
+            return 0
+        ids = library.resume_all()
+        if not ids and not any(r["status"] in ("ready", "ingesting") for r in library.rows()):
+            print("nothing to resume - see: openatlas kb library list")
+            return 0
+        if a.background:
+            return _background(library)
+        print(f"resuming {len(ids)} download(s) here - Ctrl+C pauses; "
+              "add --background to keep going after you close the terminal")
+        library.adopt_existing()
+        _follow(library, library.work)
         return 0
     if op == "verify":
         if library.get(a.id) is None:
@@ -476,9 +554,13 @@ def build_parser() -> argparse.ArgumentParser:
     y.add_argument("--lang", default="")
     y.add_argument("--no-ingest", action="store_true", help="download only")
     ls.add_parser("ingest", help="feed verified books into the brain (resumes)")
-    for verb in ("pause", "resume"):
-        y = ls.add_parser(verb, help=f"{verb} one book (id from 'list') or, without an id, all downloads")
-        y.add_argument("id", type=int, nargs="?")
+    y = ls.add_parser("pause", help="pause one book (number from 'list') or, without a number, all downloads")
+    y.add_argument("id", type=int, nargs="?")
+    y = ls.add_parser("resume", help="carry on downloading (also after closing the terminal); "
+                      "one book by number, or all")
+    y.add_argument("id", type=int, nargs="?")
+    y.add_argument("--background", action="store_true",
+                   help="keep downloading after you close the terminal (log in the library folder)")
     y = ls.add_parser("verify", help="re-check a file against its published SHA-256")
     y.add_argument("id", type=int, help="the number in [brackets] from 'openatlas kb library list'")
     ls.add_parser("serve", help="read your books with Kiwix (kiwix-serve)")

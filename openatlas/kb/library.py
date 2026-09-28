@@ -25,6 +25,7 @@ import shutil
 import threading
 import time
 import xml.etree.ElementTree as ET
+from contextlib import contextmanager
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
@@ -231,6 +232,9 @@ def resolve(name: str, lang: str = "") -> Dict[str, Any]:
 def annotate(books: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Mark each catalog book new / update / have (with the duplicate reason)."""
     for b in books:
+        if unfinished(b):  # your own half-finished download: offer to carry on
+            b["status"], b["replaces"] = "resume", None
+            continue
         try:
             dup = check_duplicate(b)
             b["status"] = "update" if dup else "new"
@@ -355,8 +359,84 @@ def _hash_file(path: Path, h: Optional[Any] = None) -> Any:
     return h
 
 
+@contextmanager
+def _exclusive(path: Path) -> Iterator[bool]:
+    """True while this process holds the book's download lock; False if another process has it
+    (two Atlas windows must never append to the same .part file)."""
+    try:
+        import fcntl
+    except ImportError:  # not POSIX: no cross-process lock, single process assumed
+        yield True
+        return
+    with open(str(path) + ".lock", "w") as fh:
+        try:
+            fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def download(row_id: int, stop: Optional[threading.Event] = None) -> str:
-    """Download (or resume) one queued book. Returns the final status."""
+    """Download (or resume) one queued book. Returns the final status, or "busy" when another
+    Atlas process is already downloading it."""
+    row = get(row_id)
+    if row is None:
+        return "missing"
+    with _exclusive(Path(row["path"])) as mine:
+        if not mine:
+            return "busy"
+        return _download(row_id, stop)
+
+
+def unfinished(book: Dict[str, Any]) -> Optional[int]:
+    """Your own not-yet-finished download of exactly this file (queued / downloading / paused /
+    failed), so asking for it again resumes it instead of being refused as a duplicate."""
+    for r in rows():
+        if r["filename"] == book.get("filename") and r["status"] in _ACTIVE + ("failed",):
+            return int(r["id"])
+    return None
+
+
+def requeue(row_id: int) -> None:
+    """Make a paused / failed / stale 'downloading' book eligible for the worker again."""
+    row = get(row_id)
+    if row and row["status"] in _ACTIVE + ("failed",):
+        _set(row_id, status="queued", note="resuming from " + _gb(row["bytes_done"]))
+
+
+def resume_all() -> List[int]:
+    """Clear the global pause and requeue every unfinished download (after a crash or a closed
+    terminal the row is left as 'downloading'; its .part file is kept)."""
+    store.set_meta("library_paused", False)
+    ids = [r["id"] for r in rows() if r["status"] in _ACTIVE]
+    for i in ids:
+        requeue(i)
+    return ids
+
+
+def _gb(n: int) -> str:
+    return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
+
+
+def progress_line(row: Dict[str, Any]) -> str:
+    """'wikipedia_en_all_nopic_2026-06.zim  12.4 / 52.7 GB  23.5%  8.1 MB/s  ETA 1h23m'."""
+    done, size, speed = row.get("bytes_done") or 0, row.get("size") or 0, row.get("speed") or 0
+    pct = f"{100 * done / size:.1f}%" if size else ""
+    eta = ""
+    if speed and size > done:
+        secs = int((size - done) / speed)
+        h, m = divmod(secs // 60, 60)
+        eta = f"ETA {h}h{m:02d}m" if h else f"ETA {m}m{secs % 60:02d}s"
+    rate = f"{speed / 1e6:.1f} MB/s" if speed else ""
+    return "  ".join(x for x in (row.get("filename", ""), f"{_gb(done)} / {_gb(size)}" if size else _gb(done),
+                                 pct, rate, eta, row.get("status", "")) if x)
+
+
+def _download(row_id: int, stop: Optional[threading.Event] = None) -> str:
     row = get(row_id)
     if row is None:
         return "missing"
@@ -623,7 +703,8 @@ def work(stop: Optional[threading.Event] = None) -> None:
         queued = [r for r in rows() if r["status"] in ("queued", "downloading")]
         if queued:
             try:
-                download(queued[0]["id"], stop)
+                if download(queued[0]["id"], stop) == "busy":
+                    return  # another Atlas process is downloading it; it will carry on
             except Exception as exc:  # e.g. disk full mid-write: report, keep the worker alive
                 log.warning("download of %s failed: %s", queued[0]["filename"], exc)
                 _set(queued[0]["id"], status="paused", note=f"stopped: {type(exc).__name__} - resume to retry")
@@ -665,8 +746,9 @@ def control(row_id: int, action: str) -> Dict[str, Any]:
         raise KeyError(row_id)
     if action == "pause" and row["status"] in ("queued", "downloading"):
         _set(row_id, status="paused")
-    elif action == "resume" and row["status"] in ("paused", "failed"):
-        _set(row_id, status="queued", note="")
+    elif action == "resume" and (row["status"] in ("paused", "failed")
+                                 or (row["status"] == "downloading" and not running())):
+        requeue(row_id)  # 'downloading' with no worker = left over from a closed terminal / crash
         start_background()
     elif action == "cancel" and row["status"] in _ACTIVE + ("failed",):
         _set(row_id, status="cancelled")
