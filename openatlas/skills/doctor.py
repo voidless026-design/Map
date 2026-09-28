@@ -424,7 +424,8 @@ def check_installation() -> Tuple[str, str]:
                if importlib.util.find_spec(_IMPORT_NAME.get(n, n).replace("-", "_")) is None]
     if missing:
         return _fail(f"not installed: {', '.join(missing)} - the code was updated but its packages weren't. "
-                     f"Run: cd '{root}' && pip install -e .   (add '.[voice]' for E.V's hearing)")
+                     f"Run: cd '{root}' && pip install -e .   (plain, first: if an optional extra such as '.[voice]' "
+                     "fails to build, pip installs nothing at all)")
     return _pass(f"all {len(core_dependencies()) or 'core'} required packages installed for {root}")
 
 

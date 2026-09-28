@@ -114,8 +114,8 @@ Some things are fixed and not dials: she is always honest that she's an AI, neve
 
 **Talk to her (hands-free, low latency).** She hears you with faster-whisper and answers with the MeloTTS **EN-AU** (Australian English) voice. Everything is local.
 ```bash
-pip install -e '.[voice]'            # hearing: faster-whisper (+ WebRTC VAD)
-sudo dnf install python3.11          # MeloTTS needs Python 3.11 beside Fedora's 3.13
+pip install -e '.[voice]'            # hearing: faster-whisper (+ WebRTC VAD up to Python 3.13)
+sudo dnf install python3.11          # MeloTTS needs Python 3.11 beside Fedora's newer Python
 openatlas ev voice-setup             # builds her voice in its own venv and saves a test phrase
 ```
 Press the mic once and just talk:
