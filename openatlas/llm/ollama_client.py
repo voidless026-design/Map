@@ -136,8 +136,11 @@ def diagnose(preferred: Optional[str] = None) -> Dict[str, Any]:
     if not chosen:
         return {"ok": False, "reason": "no_model", "installed": names,
                 "message": f"Ollama is running but has no chat model. Install one with: ollama pull {preferred}"}
-    note = "" if chosen.split(":")[0] == preferred.split(":")[0] else \
-        f" ({preferred} isn't installed; using {chosen}. For the best answers: ollama pull {preferred})"
+    note = ""
+    if chosen.split(":")[0] != preferred.split(":")[0]:
+        note = f" (your profile suggests {preferred}; using {chosen}, which is installed"
+        note += (f" - for better answers: ollama pull {preferred})" if _size_hint(chosen) < _size_hint(preferred)
+                 else ")")
     return {"ok": True, "reason": "ok", "model": chosen, "installed": names,
             "message": f"local AI ready: {chosen}{note}"}
 

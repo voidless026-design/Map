@@ -322,6 +322,21 @@ python -m openatlas.utils.forge doctor
 | Picarta / IPinfo | EXIF GPS + **Nominatim**; **RDAP**, **ip-api** and **RIPEstat** |
 | Username APIs | The **WhatsMyName** dataset (717 sites, bundled) |
 
+## If `openatlas doctor` complains
+
+- **Installation: not installed …** means the code was updated (`git pull`) but its packages
+  weren't. Run the command it prints, which uses your checkout's own folder:
+  `cd <that folder> && pip install -e '.[voice]'`.
+- **Secret lint: skipped … inside the package folder** means an old copy of OpenAtlas (for
+  example a `tests/` folder or another clone) sits *inside* `openatlas/`. It isn't used. Check
+  it, then delete it with the `rm -rf` line the doctor prints.
+- **Skill linter: external skill(s)** are skills you added from elsewhere (for example
+  Streamlit's). They are checked against the Agent Skills spec only. OpenAtlas's own skills
+  (`metadata: project: OpenAtlas`) must also meet the house rules: triggers, Verification
+  and Tools sections, and commands that run.
+- **Brain retrievability** samples five of your articles, and each must come back for its own
+  title. It names any that don't. `openatlas kb eval` gives the full picture.
+
 ## Honest limits
 
 - **Results depend on the target's real public footprint.** "Nothing found" is a valid,

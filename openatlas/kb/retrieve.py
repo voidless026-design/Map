@@ -27,7 +27,9 @@ from typing import Any, Dict, List, Optional, Set
 from openatlas.kb import embed, store
 
 _WORD = re.compile(r"\w+", re.UNICODE)
-_TOKEN = re.compile(r'(-?)"([^"]+)"|(-?)(\w+)', re.UNICODE)
+# "-word" / -"a phrase" exclude only at the start of a token: the hyphen inside "Nil-Coxeter"
+# or "e-mail" is part of the word, never an exclusion.
+_TOKEN = re.compile(r'(?:(?<!\S)(-))?"([^"]+)"|(?:(?<![\S])(-))?(\w+)', re.UNICODE)
 
 STOPWORDS = frozenset("""
 a about above after again against all am an and any are as at be because been before being
@@ -70,7 +72,8 @@ def parse(q: str) -> Query:
         elif word:
             (out.exclude if neg_w else words).append(word.lower())
     meaningful = [w for w in words if w not in STOPWORDS and (len(w) > 1 or w.isdigit())]
-    out.terms = list(dict.fromkeys(meaningful or [w for w in words if len(w) > 1]))[:12]
+    # single letters only count when they are all there is ("C++", "R", "X")
+    out.terms = list(dict.fromkeys(meaningful or [w for w in words if len(w) > 1] or words))[:12]
     return out
 
 
@@ -126,10 +129,11 @@ def search(query: str, k: int = 8, *, tag: Optional[str] = None, use_vectors: bo
     with store.connect() as con:
         # 1) titles and aliases: exact first, then every term, then most terms
         # exact: the whole query, or the query minus question words ("what is X" -> "X")
-        for norm in dict.fromkeys((q.norm, " ".join(q.terms))):
+        for norm, strength in ((q.norm, 1.0), (" ".join(q.terms), 0.95)):  # whole query wins ties
             for r in con.execute("SELECT doc_id, title, kind FROM titles WHERE norm=?", (norm,)):
                 d = doc(r["doc_id"])
-                d["title_score"], d["title_why"], d["title_text"] = 1.0, "exact " + r["kind"], r["title"]
+                if strength > d["title_score"]:
+                    d["title_score"], d["title_why"], d["title_text"] = strength, "exact " + r["kind"], r["title"]
         for fq, strength in ((_fts(q.terms), 0.75), (_fts(q.terms, " OR "), 0.0)):
             for r in con.execute("SELECT t.doc_id, t.title, t.kind FROM titles_fts f JOIN titles t "
                                  "ON t.id=f.rowid WHERE titles_fts MATCH ? ORDER BY bm25(titles_fts) "

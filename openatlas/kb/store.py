@@ -196,8 +196,9 @@ def connect() -> Iterator[sqlite3.Connection]:
 
 
 def norm_title(title: str) -> str:
-    """Case/space/punctuation-insensitive form used for exact title and alias matches."""
-    return " ".join(re.findall(r"\w+", title.lower()))
+    """Case/space/punctuation-insensitive form used for exact title and alias matches.
+    A trailing + or # stays part of the word, so "C++", "C#" and "C" don't collide."""
+    return " ".join(re.findall(r"\w+[+#]*", title.lower()))
 
 
 def _index_title(con: sqlite3.Connection, doc_id: int, title: str, kind: str) -> None:
@@ -211,7 +212,11 @@ def _index_title(con: sqlite3.Connection, doc_id: int, title: str, kind: str) ->
 
 
 def _backfill_titles(con: sqlite3.Connection) -> None:
-    """Brains created before the title index get it once, on first connect."""
+    """Brains created before the title index get it once, on first connect; titles normalised
+    by an older rule (before "C++"/"C#" kept their symbols) are re-normalised once."""
+    for r in con.execute("SELECT id, title, norm FROM titles WHERE title LIKE '%+%' OR title LIKE '%#%'").fetchall():
+        if r["norm"] != norm_title(r["title"]):
+            con.execute("UPDATE titles SET norm=? WHERE id=?", (norm_title(r["title"]), r["id"]))
     if con.execute("SELECT 1 FROM titles LIMIT 1").fetchone() or \
             not con.execute("SELECT 1 FROM documents LIMIT 1").fetchone():
         return
