@@ -325,11 +325,14 @@ python -m openatlas.utils.forge doctor
 ## If `openatlas doctor` complains
 
 - **Installation: not installed …** means the code was updated (`git pull`) but its packages
-  weren't. Run the command it prints, which uses your checkout's own folder:
-  `cd <that folder> && pip install -e '.[voice]'`.
+  weren't. Run the command it prints, which uses your checkout's own folder.
+- **Installation: pip install -e . will fail … links outside the project** (pip says
+  "… is not in the subpath of …") means a folder inside `openatlas/`, usually an old copy with
+  its own virtualenv, contains a link to your system Python. Move it out with the line the
+  doctor prints, then run `pip install -e .` again.
 - **Secret lint: skipped … inside the package folder** means an old copy of OpenAtlas (for
   example a `tests/` folder or another clone) sits *inside* `openatlas/`. It isn't used. Check
-  it, then delete it with the `rm -rf` line the doctor prints.
+  it, then move it out with the `mv` line the doctor prints (nothing is deleted).
 - **Skill linter: external skill(s)** are skills you added from elsewhere (for example
   Streamlit's). They are checked against the Agent Skills spec only. OpenAtlas's own skills
   (`metadata: project: OpenAtlas`) must also meet the house rules: triggers, Verification

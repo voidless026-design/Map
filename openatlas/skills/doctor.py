@@ -78,6 +78,7 @@ def check_secret_lint() -> Tuple[str, str]:
     from openatlas.utils.secret_lint import (
         default_target,
         iter_files,
+        move_out_line,
         scan_path,
         scan_text,
         stray_copies,
@@ -96,7 +97,7 @@ def check_secret_lint() -> Tuple[str, str]:
         if strays:  # e.g. an old copy of the repo unpacked inside the package folder
             return "warn", (detail + f"; skipped {len(strays)} thing(s) inside the package folder that "
                             "aren't part of it (an old copy?): " + ", ".join(s.name for s in strays)
-                            + " - check, then remove with: rm -rf " + " ".join(f"'{s}'" for s in strays))
+                            + " - check, then move it out with: " + move_out_line(strays))
         return _pass(detail)
     where = "; ".join(f"{f['source']}:{f['line']} ({f['rule']})" for f in repo[:3])
     return _fail(f"planted caught={bool(planted)} clean flagged={bool(clean)} files={n_files} "
@@ -419,7 +420,24 @@ def check_installation() -> Tuple[str, str]:
     dependencies only arrive with `pip install -e .` - run in the checkout's own folder.)"""
     import importlib.util
 
+    from openatlas.utils.secret_lint import (
+        default_target,
+        move_out_line,
+        outside_links,
+        stray_copies,
+    )
+
     root = Path(Config.files.project_root)
+    pkg = default_target()
+    links = outside_links(pkg)
+    if links:  # pip would follow them while building and stop with "... is not in the subpath of ..."
+        # the top-level folder of the package holding each link - the real package never has one
+        owners = sorted({pkg / ln.relative_to(pkg).parts[0] for ln in links})
+        stray = {s.name for s in stray_copies(pkg)}
+        why = "an old copy" if all(o.name in stray for o in owners) else "not part of OpenAtlas"
+        fix = f"{move_out_line(owners)}   ({why} inside the package folder)"
+        return _fail(f"pip install -e . will fail: {links[0]} links outside the project "
+                     f"(to {links[0].resolve()}). Fix: {fix}, then: cd '{root}' && pip install -e .")
     missing = [n for n in core_dependencies()
                if importlib.util.find_spec(_IMPORT_NAME.get(n, n).replace("-", "_")) is None]
     if missing:
