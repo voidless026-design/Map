@@ -11,6 +11,7 @@ paid API key or a paid backend.** Map any paid dependency to a free/keyless/loca
 - Active network scanning stays authorization-gated (`--authorized-target`).
 - Stealer-log retrieval stays disabled. Only defensive breach-existence checks.
 - No hardcoded secrets. `python -m openatlas.utils.secret_lint openatlas` must be clean.
+  - The package scan (`package=True`, used by the doctor) skips repository leftovers inside the package (`tests/`, nested checkouts) and reports them.
 
 ## Adding a function
 Use the `skill-forge` skill / scaffolder:
@@ -32,6 +33,8 @@ python -m openatlas.utils.forge new-skill --name my-skill --description "..." \
 Tools sections, every documented `openatlas ...` command must pass `--help`).
 `python -m openatlas.utils.forge verify-skill --all` and `python -m openatlas.utils.forge doctor`
 must both pass (CI runs them).
+- OpenAtlas skills carry `metadata: project: OpenAtlas`, or mention `openatlas`, and must meet the house rules.
+- Third-party skills in `.claude/skills` are linted against the Agent Skills spec only.
 
 ## v2 layout
 - `openatlas/investigate/` - evidence pipeline; new sources use `@source(...)` in

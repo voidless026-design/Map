@@ -45,6 +45,31 @@ def test_title_beats_body_and_question_words_are_ignored(corpus):
     assert titles("roman empire")[0] == "Roman Empire"
 
 
+def test_hyphen_is_part_of_the_word_not_an_exclusion(corpus):
+    """Regression: 'Nil-Coxeter algebra' used to exclude 'coxeter' and miss its own article."""
+    q = retrieve.parse("Nil-Coxeter algebra -film")
+    assert q.terms == ["nil", "coxeter", "algebra"] and q.exclude == ["film"]
+    assert titles("Nil-Coxeter algebra")[0] == "Nil-Coxeter algebra"
+    assert titles("nil-coxeter algebra")[0] == "Nil-Coxeter algebra"
+
+
+def test_symbols_and_single_letters_find_their_own_titles(tmp_path):
+    with store.use_path(tmp_path / "sym.sqlite"):
+        for t in ("C++", "C#", "C (programming language)", "R (programming language)"):
+            store.upsert_document(key="wikipedia:" + t, source="wikipedia", title=t, text=f"{t} is a topic. " * 6)
+        for t in ("C++", "C#", "C (programming language)", "R (programming language)"):
+            assert titles(t)[0] == t, t
+
+
+def test_old_title_norms_are_upgraded(tmp_path):
+    with store.use_path(tmp_path / "old2.sqlite"):
+        store.upsert_document(key="wikipedia:C++", source="wikipedia", title="C++", text="C++ is a language. " * 6)
+        with store.connect() as con:  # a brain indexed with the old rule ("C++" -> "c")
+            con.execute("UPDATE titles SET norm='c'")
+        store.reset_init_cache()
+        assert titles("C++")[0] == "C++"
+
+
 def test_aliases_and_exclusions(corpus):
     assert titles("WWII") == ["World War II"]
     assert titles("ML") == ["Machine learning"]
@@ -88,4 +113,4 @@ def test_ask_refuses_rather_than_answering_off_topic(corpus, monkeypatch):
 
 def test_brain_eval_uses_your_own_articles(corpus):
     r = evaluate.eval_brain(sample=50)
-    assert r["ok"] and r["queries"] >= 14 and r["metrics"]["p_at_1"] >= 0.85
+    assert r["ok"] and r["queries"] >= 16 and r["metrics"]["p_at_1"] >= 0.85

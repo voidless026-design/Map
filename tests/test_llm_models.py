@@ -22,9 +22,15 @@ def test_diagnose_explains_what_to_do(fake_ollama):
     fake_ollama.models = ["nomic-embed-text:latest"]
     d = ollama_client.diagnose("llama3.1:8b")
     assert not d["ok"] and d["reason"] == "no_model" and "ollama pull llama3.1:8b" in d["message"]
-    fake_ollama.models = ["qwen3:8b"]
+    fake_ollama.models = ["qwen3:8b"]  # as capable as the profile's pick: no nagging
     d = ollama_client.diagnose("llama3.1:8b")
-    assert d["ok"] and d["model"] == "qwen3:8b" and "ollama pull llama3.1:8b" in d["message"]
+    assert d["ok"] and d["model"] == "qwen3:8b" and "pull" not in d["message"]
+    fake_ollama.models = ["llama3.1:8b"]  # bigger than the profile's pick (your real doctor output)
+    d = ollama_client.diagnose("llama3.2:3b")
+    assert d["ok"] and d["model"] == "llama3.1:8b" and "pull" not in d["message"]
+    fake_ollama.models = ["llama3.2:3b"]  # smaller than the profile's pick: suggest the better one
+    d = ollama_client.diagnose("llama3.1:8b")
+    assert d["model"] == "llama3.2:3b" and "ollama pull llama3.1:8b" in d["message"]
 
 
 def test_diagnose_when_not_running():

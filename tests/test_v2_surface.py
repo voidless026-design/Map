@@ -111,7 +111,7 @@ def test_linter_rejects_bad_skill(tmp_path):
 
     d = tmp_path / "Bad_Name"
     d.mkdir()
-    (d / "SKILL.md").write_text("---\nname: Bad_Name\ndescription: x\n---\n# nope\n")
+    (d / "SKILL.md").write_text("---\nname: Bad_Name\ndescription: x\nmetadata:\n  project: OpenAtlas\n---\n# nope\n")
     r = linter.lint_skill(str(d), run_commands=False)
     assert not r["ok"]
     assert any("name" in e for e in r["errors"])

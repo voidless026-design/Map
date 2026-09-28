@@ -132,6 +132,19 @@ def lint_skill(path: str, *, run_commands: bool = True) -> Dict[str, Any]:
 
     secs = sections(body)
     trig = triggers(body)
+    # Skills from elsewhere (e.g. a Streamlit or company skill you added) follow the Agent
+    # Skills spec, not OpenAtlas's house rules: only the spec checks + secret scan apply to them.
+    ours = (isinstance(meta.get("metadata"), dict) and meta["metadata"].get("project") == "OpenAtlas") \
+        or "openatlas" in body.lower()  # hand-written OpenAtlas skills are held to the house rules too
+    if not ours:
+        from openatlas.utils.secret_lint import scan_text
+
+        if scan_text(text):
+            errors.append("contains a secret or paid-API-key literal")
+        warnings.append("external skill (no `metadata: project: OpenAtlas`): checked against the Agent "
+                        "Skills spec only")
+        return {"ok": not errors, "name": name or folder, "description": desc, "triggers": trig,
+                "commands": [], "errors": errors, "warnings": warnings, "path": str(skill_md), "external": True}
     if len(trig) < 3:
         errors.append(f"'When to trigger' needs at least 3 examples (found {len(trig)})")
     if _find(secs, "verif") is None:
@@ -169,7 +182,7 @@ def lint_skill(path: str, *, run_commands: bool = True) -> Dict[str, Any]:
     if scan_text(text):
         errors.append("contains a secret or paid-API-key literal")
     return {"ok": not errors, "name": name or folder, "description": desc, "triggers": trig,
-            "commands": checked, "errors": errors, "warnings": warnings, "path": str(skill_md)}
+            "commands": checked, "errors": errors, "warnings": warnings, "path": str(skill_md), "external": False}
 
 
 def _is_module(dotted: str) -> bool:

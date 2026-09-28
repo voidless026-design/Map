@@ -27,7 +27,7 @@ def test_secret_lint_check_ignores_current_folder(tmp_path, monkeypatch, layout)
     monkeypatch.chdir(tmp_path)
     status, detail = doctor.check_secret_lint()
     assert status == "pass", detail
-    assert "source files clean" in detail and not detail.startswith("0")
+    assert "package files clean" in detail and not detail.startswith("0")
 
 
 def test_scan_path_skips_virtualenvs_and_honours_pragma(tmp_path):
@@ -123,7 +123,7 @@ def test_doctor_names_the_failing_skill(skill_dirs):
     live, _ = skill_dirs
     bad = live / "half-done"
     bad.mkdir(parents=True)
-    (bad / "SKILL.md").write_text("---\nname: half-done\ndescription: x\n---\n# nothing\n")
+    (bad / "SKILL.md").write_text("---\nname: half-done\ndescription: x\nmetadata:\n  project: OpenAtlas\n---\n# nothing\n")
     status, detail = doctor.check_skill_linter()
     assert status == "fail" and "half-done" in detail and "skill-drafts" in detail
 
@@ -136,3 +136,65 @@ def test_linter_reports_unimportable_module_instead_of_crashing(tmp_path):
         "## Verification\nx\n## Tools\nuses `openatlas.no_such_pkg.thing`\n")
     r = linter.lint_skill(str(d), run_commands=False)
     assert not r["ok"] and any("no_such_pkg" in e for e in r["errors"])
+
+
+# ------------------------------------------------------------------ fixes from a real Fedora run
+def test_stray_repo_copy_inside_the_package_is_skipped_and_reported(tmp_path, monkeypatch):
+    """An old copy of the repo unpacked inside the package folder (with its old test fixture,
+    no pragma) used to FAIL the secret lint. Now it's skipped and the doctor says what to delete."""
+    pkg = tmp_path / "openatlas"
+    (pkg / "tests").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "real.py").write_text("x = 1\n")
+    (pkg / "tests" / "test_robots_and_db.py").write_text(FAKE)  # the old fixture line
+    (pkg / "openatlas").mkdir()
+    (pkg / "openatlas" / "__init__.py").write_text(FAKE)       # the package nested in itself
+    assert len(secret_lint.scan_path(pkg)) == 2                 # the old behaviour
+    assert secret_lint.scan_path(pkg, package=True) == []
+    assert sorted(p.name for p in secret_lint.stray_copies(pkg)) == ["openatlas", "tests"]
+    monkeypatch.setattr(secret_lint, "default_target", lambda: pkg)
+    status, detail = doctor.check_secret_lint()
+    assert status == "warn" and "rm -rf" in detail and "tests" in detail
+    (pkg / "real.py").write_text(FAKE)                          # real package code is still scanned
+    assert doctor.check_secret_lint()[0] == "fail"
+
+
+def test_external_skill_is_checked_against_the_spec_only(skill_dirs):
+    live, _ = skill_dirs
+    (live / "developing-with-streamlit").mkdir(parents=True)
+    (live / "developing-with-streamlit" / "SKILL.md").write_text(
+        "---\nname: developing-with-streamlit\ndescription: Build Streamlit apps.\n---\n# Streamlit\n")
+    r = linter.lint_skill(str(live / "developing-with-streamlit"), run_commands=False)
+    assert r["ok"] and r["external"] and "Agent Skills spec only" in r["warnings"][0]
+    (live / "bad-external").mkdir()
+    (live / "bad-external" / "SKILL.md").write_text("---\nname: Not_Valid\ndescription: x\n---\n")
+    assert not linter.lint_skill(str(live / "bad-external"), run_commands=False)["ok"]  # spec still enforced
+    ours = live / "weak"
+    ours.mkdir()
+    (ours / "SKILL.md").write_text("---\nname: weak\ndescription: d\nmetadata:\n  project: OpenAtlas\n---\n")
+    assert not linter.lint_skill(str(ours), run_commands=False)["ok"]  # house rules for our skills
+    status, detail = doctor.check_skill_linter()
+    assert status == "fail" and "Not_Valid" in detail and "weak" in detail
+    import shutil
+
+    shutil.rmtree(live / "bad-external")
+    shutil.rmtree(ours)
+    status, detail = doctor.check_skill_linter()
+    assert status == "pass" and "external skill(s)" in detail and "developing-with-streamlit" in detail
+
+
+def test_installation_check_names_missing_packages(monkeypatch):
+    import importlib.util
+
+    assert doctor.check_installation()[0] == "pass"
+    real = importlib.util.find_spec
+    monkeypatch.setattr(importlib.util, "find_spec", lambda n, *a, **k: None if n == "docx" else real(n, *a, **k))
+    status, detail = doctor.check_installation()
+    assert status == "fail" and "python-docx" in detail and "pip install -e ." in detail
+    status, detail = doctor.check_ev_documents()
+    assert status == "fail" and "pip install -e ." in detail and "ModuleNotFoundError" not in detail
+
+
+def test_brain_check_self_tests_tricky_titles():
+    status, detail = doctor.check_brain()
+    assert status == "pass", detail

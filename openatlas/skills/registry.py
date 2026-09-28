@@ -26,5 +26,6 @@ def list_skills(run_commands: bool = False) -> List[Dict[str, Any]]:
         desc = r.get("description", "")
         out.append({"name": r["name"], "summary": desc.split(". ")[0][:220],
                     "description": desc, "triggers": r.get("triggers", []),
-                    "lint_ok": r["ok"], "errors": r["errors"], "path": r["path"]})
+                    "lint_ok": r["ok"], "errors": r["errors"], "path": r["path"],
+                    "external": r.get("external", False)})
     return out

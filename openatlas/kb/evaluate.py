@@ -88,6 +88,13 @@ FIXTURE_DOCS: List[Dict[str, Any]] = [
     {"title": "FIFA World Cup", "aliases": ["World Cup"], "text":
         "The FIFA World Cup is an international association football competition held every four "
         "years between men's national teams. The first tournament was held in 1930 in Uruguay."},
+    # hyphenated titles: the hyphen is part of the name, never the -exclude operator
+    {"title": "Nil-Coxeter algebra", "aliases": [], "text":
+        "In mathematics, the nil-Coxeter algebra, introduced by Fomin and Stanley, is an algebra "
+        "similar to the group algebra of a Coxeter group except that its generators are nilpotent."},
+    {"title": "Coxeter group", "aliases": [], "text":
+        "In mathematics, a Coxeter group, named after H. S. M. Coxeter, is an abstract group that "
+        "admits a formal description in terms of reflections of a Euclidean space."},
 ]
 
 FIXTURE_QUERIES: List[Dict[str, Any]] = [
@@ -105,6 +112,7 @@ FIXTURE_QUERIES: List[Dict[str, Any]] = [
     {"q": "the plague in medieval europe", "expect": ["Black Death"], "ok": []},
     {"q": '"event horizon"', "expect": ["Black hole"], "ok": []},
     {"q": "empire -film -holy", "expect": ["Roman Empire"], "ok": ["History of Rome"]},
+    {"q": "Nil-Coxeter algebra", "expect": ["Nil-Coxeter algebra"], "ok": ["Coxeter group"]},
     {"q": "quantum chromodynamics gluon", "expect": [], "ok": []},  # not in the brain: say so
 ]
 

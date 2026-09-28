@@ -11,12 +11,15 @@ reports which ones answer (this is the only part that uses the internet).
 from __future__ import annotations
 
 import asyncio
+import re
 import tempfile
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Tuple
 
 import httpx
+
+from openatlas.config import Config
 
 Check = Tuple[str, Callable[[], Tuple[str, str]]]  # name, fn -> (status, detail)
 
@@ -72,17 +75,29 @@ def check_robots_guard() -> Tuple[str, str]:
 
 
 def check_secret_lint() -> Tuple[str, str]:
-    from openatlas.utils.secret_lint import default_target, iter_files, scan_path, scan_text
+    from openatlas.utils.secret_lint import (
+        default_target,
+        iter_files,
+        scan_path,
+        scan_text,
+        stray_copies,
+    )
 
     planted = scan_text('api_key = "' + "sk-" + "a1b2c3d4" * 4 + '"')
     clean = scan_text("def ok():\n    return 'nothing secret here'\n")
     # Always the installed package (absolute path): the result must not depend on the folder
     # you run `openatlas doctor` from, and must never scan a virtualenv's site-packages.
     target = default_target()
-    n_files = len(iter_files(target))
-    repo = scan_path(target)
+    n_files = len(iter_files(target, package=True))
+    repo = scan_path(target, package=True)
+    strays = stray_copies(target)
     if planted and not clean and n_files and not repo:
-        return _pass(f"planted key caught; clean text passes; {n_files} source files clean")
+        detail = f"planted key caught; clean text passes; {n_files} package files clean"
+        if strays:  # e.g. an old copy of the repo unpacked inside the package folder
+            return "warn", (detail + f"; skipped {len(strays)} thing(s) inside the package folder that "
+                            "aren't part of it (an old copy?): " + ", ".join(s.name for s in strays)
+                            + " - check, then remove with: rm -rf " + " ".join(f"'{s}'" for s in strays))
+        return _pass(detail)
     where = "; ".join(f"{f['source']}:{f['line']} ({f['rule']})" for f in repo[:3])
     return _fail(f"planted caught={bool(planted)} clean flagged={bool(clean)} files={n_files} "
                  f"findings={len(repo)} {where}")
@@ -123,14 +138,23 @@ def check_scaffolder() -> Tuple[str, str]:
 def check_skill_linter() -> Tuple[str, str]:
     from openatlas.skills import linter, registry
 
-    real = [s for s in registry.list_skills() if not s["lint_ok"]]
+    skills = registry.list_skills()
+    real = [s for s in skills if not s["lint_ok"]]
     with tempfile.TemporaryDirectory() as d:
         bad = Path(d) / "Bad_Skill"
         bad.mkdir()
         (bad / "SKILL.md").write_text("---\nname: Bad_Skill\ndescription: x\n---\n# nothing\n")
         rejected = not linter.lint_skill(str(bad), run_commands=False)["ok"]
+        weak = Path(d) / "weak-skill"  # an OpenAtlas skill must still meet the house rules
+        weak.mkdir()
+        (weak / "SKILL.md").write_text("---\nname: weak-skill\ndescription: does things\nmetadata:\n"
+                                       "  project: OpenAtlas\n---\n# weak\n")
+        rejected = rejected and not linter.lint_skill(str(weak), run_commands=False)["ok"]
+    ext = [s["name"] for s in skills if s.get("external")]
     if not real and rejected:
-        return _pass(f"{len(registry.list_skills())} project skills valid; broken skill rejected")
+        note = (f"; {len(ext)} external skill(s) checked against the Agent Skills spec only: {', '.join(ext)}"
+                if ext else "")
+        return _pass(f"{len(skills) - len(ext)} project skills valid; broken skill rejected{note}")
     if not real:
         return _fail("broken fixture was accepted")
     names = ", ".join(s["name"] for s in real)
@@ -239,20 +263,32 @@ def check_brain() -> Tuple[str, str]:
                     for h in retrieve.search("topological quantum field theory", k=5,
                                              use_vectors=False))
         nonsense = retrieve.search("zqxjv wqpfk", k=5, use_vectors=False)
-    if not found or nonsense:
-        return _fail(f"self-test: fixture found={found}, nonsense query returned {len(nonsense)} hits")
+        # titles that used to trip the parser: a hyphen is not "-exclude", "C++" is not "C"
+        tricky = ["Nil-Coxeter algebra", "C++", "C#", "C (programming language)"]
+        for t in tricky:
+            store.upsert_document(key=f"doctor:{t}", source="wikipedia", title=t, text=f"{t} is a topic. " * 6)
+        tricky_miss = [t for t in tricky if (retrieve.search(t, k=5, use_vectors=False) or [{}])[0].get("title") != t]
+    if not found or nonsense or tricky_miss:
+        return _fail(f"self-test: fixture found={found}, nonsense query returned {len(nonsense)} hits, "
+                     f"titles not ranked first: {tricky_miss}")
 
     with store.connect() as con:
         n = con.execute("SELECT COUNT(*) FROM documents WHERE source='wikipedia'").fetchone()[0]
-        row = con.execute("SELECT title, key FROM documents WHERE source='wikipedia' "
-                          "ORDER BY RANDOM() LIMIT 1").fetchone()
-    if not row:
+        rows = con.execute("SELECT title, key FROM documents WHERE source='wikipedia' "
+                           "ORDER BY RANDOM() LIMIT 5").fetchall()
+    if not rows:
         return _pass("store + search self-test ok; your brain has 0 articles yet - grow it with "
                      "`openatlas kb ingest` or 'Grow the brain'")
-    hits = retrieve.search(row["title"], k=5, use_vectors=False)
-    if any(h["key"] == row["key"] for h in hits):
-        return _pass(f"self-test ok; {n} articles, random '{row['title']}' retrievable in top 5")
-    return _fail(f"your brain: '{row['title']}' not found in top 5 for its own title")
+    misses = []
+    for row in rows:  # each article must come back for its own title
+        hits = retrieve.search(row["title"], k=5, use_vectors=False)
+        if not any(h["key"] == row["key"] for h in hits):
+            misses.append(f"'{row['title']}' (got: {', '.join(h['title'] for h in hits[:3]) or 'nothing'})")
+    if not misses:
+        return _pass(f"self-test ok; {n:,} articles, {len(rows)} random ones (e.g. '{rows[0]['title']}') "
+                     "each found by their own title")
+    return _fail(f"your brain: {len(misses)}/{len(rows)} not found for their own title: " + "; ".join(misses)
+                 + " - run `openatlas kb eval` for the full picture")
 
 
 def check_search_relevance() -> Tuple[str, str]:
@@ -356,6 +392,42 @@ def check_library() -> Tuple[str, str]:
     return ("warn", f"{detail}; {'; '.join(extras)}") if extras else _pass(detail)
 
 
+# import name for each core dependency whose module name differs from its package name
+_IMPORT_NAME = {"dnspython": "dns", "beautifulsoup4": "bs4", "pillow": "PIL", "python-dotenv": "dotenv",
+                "pyyaml": "yaml", "python-docx": "docx"}
+
+
+def core_dependencies() -> List[str]:
+    """Required (non-optional) packages from this checkout's pyproject.toml."""
+    pyproject = Path(Config.files.project_root) / "pyproject.toml"
+    if not pyproject.exists():
+        return []
+    text = pyproject.read_text()
+    try:
+        import tomllib
+    except ImportError:  # Python 3.10: the table is flat `name = spec` lines, read them directly
+        body = re.search(r"^\[tool\.poetry\.dependencies\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S)
+        lines = [ln.split("#", 1)[0].strip() for ln in (body.group(1) if body else "").splitlines()]
+        return [ln.split("=", 1)[0].strip().strip('"') for ln in lines
+                if "=" in ln and not ln.startswith("python ") and not re.search(r"optional\s*=\s*true", ln)]
+    deps = tomllib.loads(text)["tool"]["poetry"]["dependencies"]
+    return [n for n, spec in deps.items() if n != "python" and not (isinstance(spec, dict) and spec.get("optional"))]
+
+
+def check_installation() -> Tuple[str, str]:
+    """Is every package this checkout needs actually installed? (After `git pull`, new
+    dependencies only arrive with `pip install -e .` - run in the checkout's own folder.)"""
+    import importlib.util
+
+    root = Path(Config.files.project_root)
+    missing = [n for n in core_dependencies()
+               if importlib.util.find_spec(_IMPORT_NAME.get(n, n).replace("-", "_")) is None]
+    if missing:
+        return _fail(f"not installed: {', '.join(missing)} - the code was updated but its packages weren't. "
+                     f"Run: cd '{root}' && pip install -e .   (add '.[voice]' for E.V's hearing)")
+    return _pass(f"all {len(core_dependencies()) or 'core'} required packages installed for {root}")
+
+
 def _ev_sandbox():  # type: ignore[no-untyped-def]
     """A throwaway brain + E.V store (persona, memory, approvals) for self-tests."""
     from contextlib import contextmanager
@@ -411,9 +483,13 @@ def check_ev_documents() -> Tuple[str, str]:
     """Document Intelligence on fixture files: page-cited passages, folder limits enforced."""
     import os
 
-    import docx
-
     from openatlas.ev import tools
+
+    try:
+        import docx
+    except ImportError:
+        return _fail("python-docx isn't installed (your install is older than the code). Run: "
+                     f"cd '{Config.files.project_root}' && pip install -e .")
 
     with _ev_sandbox() as d:
         root = d / "docs"
@@ -517,6 +593,7 @@ def check_ev_persona() -> Tuple[str, str]:
 
 
 CHECKS: List[Check] = [
+    ("Installation", check_installation),
     ("Schema validator", check_schema_validator),
     ("ToolResult validator", check_toolresult_validator),
     ("Smoke / dry-run runner", check_smoke_runner),

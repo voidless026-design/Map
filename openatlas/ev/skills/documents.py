@@ -63,6 +63,13 @@ def extract(p: Path) -> List[Dict[str, Any]]:
     if p.stat().st_size > MAX_BYTES:
         raise ValueError(f"{p.name} is larger than {MAX_BYTES // 1024**2} MB")
     ext = p.suffix.lower()
+    if ext in (".pdf", ".docx"):
+        import importlib.util
+
+        need = "pypdf" if ext == ".pdf" else "docx"
+        if importlib.util.find_spec(need) is None:
+            raise RuntimeError(f"reading {ext} files needs {'pypdf' if ext == '.pdf' else 'python-docx'} - "
+                               "run: pip install -e .  (in your OpenAtlas folder)")
     if ext == ".pdf":
         from pypdf import PdfReader
 
