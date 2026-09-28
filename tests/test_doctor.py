@@ -154,7 +154,7 @@ def test_stray_repo_copy_inside_the_package_is_skipped_and_reported(tmp_path, mo
     assert sorted(p.name for p in secret_lint.stray_copies(pkg)) == ["openatlas", "tests"]
     monkeypatch.setattr(secret_lint, "default_target", lambda: pkg)
     status, detail = doctor.check_secret_lint()
-    assert status == "warn" and "rm -rf" in detail and "tests" in detail
+    assert status == "warn" and "mv " in detail and "~/openatlas-old-copy" in detail and "tests" in detail
     (pkg / "real.py").write_text(FAKE)                          # real package code is still scanned
     assert doctor.check_secret_lint()[0] == "fail"
 
@@ -211,3 +211,25 @@ def test_voice_extra_installs_on_new_python():
     text = (Path(Config.files.project_root) / "pyproject.toml").read_text()
     line = next(ln for ln in text.splitlines() if ln.startswith("webrtcvad-wheels"))
     assert re.search(r'python\s*=\s*"<3\.14"', line) and "optional = true" in line
+
+
+def test_link_outside_the_project_fails_installation_with_a_move_line(tmp_path, monkeypatch):
+    """The user's Fedora: an old copy with its own virtualenv inside the package folder. pip
+    followed its bin/python3.14 link and stopped with "... is not in the subpath of ..." """
+    import sys
+
+    pkg = tmp_path / "openatlas"
+    (pkg / "sub").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / "sub" / "alias.py").symlink_to(pkg / "__init__.py")  # stays inside: fine
+    monkeypatch.setattr(secret_lint, "default_target", lambda: pkg)
+    assert secret_lint.outside_links(pkg) == []
+    assert doctor.check_installation()[0] == "pass"
+    venv_bin = pkg / "openatlas" / ".venv" / "bin"
+    venv_bin.mkdir(parents=True)
+    (pkg / "openatlas" / "__init__.py").write_text("")
+    (venv_bin / "python3").symlink_to(sys.executable)
+    assert secret_lint.outside_links(pkg) == [venv_bin / "python3"]
+    status, detail = doctor.check_installation()
+    assert status == "fail" and "will fail" in detail and "python3" in detail
+    assert f"mv '{pkg / 'openatlas'}' ~/openatlas-old-copy/" in detail and "rm -rf" not in detail

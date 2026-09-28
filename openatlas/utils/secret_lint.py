@@ -12,6 +12,7 @@ in a separate module, on public GitHub repos for the ``get_repo_secrets`` engine
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 from typing import Dict, List
@@ -110,6 +111,31 @@ def stray_copies(package_root) -> List[Path]:
         elif child.is_dir() and any((child / m).exists() for m in _CHECKOUT_MARKERS):
             out.append(child)  # another checkout inside the package
     return out
+
+
+def outside_links(package_root, limit: int = 20) -> List[Path]:
+    """Symlinks inside the package folder that point outside the checkout - typically the
+    ``bin/python3`` of a virtualenv inside an old copy. Building the package (``pip install``)
+    follows them and fails with "... is not in the subpath of ...". Not followed into."""
+    root = Path(package_root).resolve()
+    checkout = root.parent
+    out: List[Path] = []
+    for dirpath, dirnames, filenames in os.walk(root):  # os.walk never descends into symlinked dirs
+        dirnames[:] = [d for d in dirnames if d != "__pycache__"]
+        for name in dirnames + filenames:
+            p = Path(dirpath) / name
+            if p.is_symlink():
+                target = p.resolve()
+                if target != checkout and checkout not in target.parents:
+                    out.append(p)
+                    if len(out) >= limit:
+                        return out
+    return out
+
+
+def move_out_line(paths) -> str:
+    """A reversible clean-up line (moves, never deletes) for things that don't belong in the package."""
+    return "mkdir -p ~/openatlas-old-copy && mv " + " ".join(f"'{p}'" for p in paths) + " ~/openatlas-old-copy/"
 
 
 def iter_files(path, exts=(".py", ".yaml", ".yml", ".toml", ".env", ".txt"), *,
