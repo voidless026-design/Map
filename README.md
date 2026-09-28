@@ -68,6 +68,65 @@ Override the automatic choices with these variables:
 - `OPENATLAS_LLM_MODEL`, `OPENATLAS_VISION_MODEL` and `OPENATLAS_EMBED_MODEL`
 - `OLLAMA_HOST`
 
+If E.V says Ollama has **no chat model**, install one: `ollama pull llama3.1:8b`.
+Before this fix, a missing model showed up as "HTTP 404". If the profile's model isn't installed, Atlas now picks the closest one you *do* have and says which.
+
+## E.V - your local AI companion
+
+E.V is the chat on the home page, and it runs only on this PC.
+- **Memory:** everything she remembers stays in `OPENATLAS_DATA_DIR/ev/`.
+- **Local model:** her model is your local Ollama.
+- **Voice:** speech recognition and her Australian voice are local too.
+
+```bash
+openatlas serve                 # chat with E.V in the browser (home page)
+openatlas ev chat               # ...or in the terminal
+openatlas ev status             # local model, hearing, voice, mood
+openatlas ev memory             # what she remembers (--forget "words" to remove)
+openatlas ev approvals          # actions waiting for your OK;  openatlas ev approve 3
+```
+
+**Her eight skills** (each is a tool she calls; see `.claude/skills/`):
+
+| Skill | What it does |
+|---|---|
+| Document Intelligence | Reads your PDFs, Word files and notes. Answers come with page-cited quotes. |
+| Project Setup | Drafts a project layout, then creates it once you approve. Never overwrites anything. |
+| Research Synthesis | Searches the brain, or the web with your approval. Every sentence cites a numbered source. |
+| Workflow Automation | Runs named routines on a schedule: grow the brain, resume downloads, check quality, write digests. |
+| Context Continuity | Remembers what you tell her across chats. You can list, edit or forget any of it. |
+| Interactive Planning | Puts checklists in the chat that you tick, edit and reorder. She keeps open plans in view. |
+| Quality Assurance | Checks every factual answer claim by claim: **supported / unsupported / unverified**. |
+| Decision Support | Builds a weighted option matrix with a risk read-out and a sensitivity check. |
+
+**Ask before acting.** She runs some things by herself and asks for others:
+- **Automatic:** reading the brain, your allowed documents and her own memory.
+- **Needs your approval:** anything touching the network, writing files or running an OpenAtlas command. It appears as an **Approve / Deny** card, with her risk read-out.
+
+**Personality.** There are nine dials in **Settings**:
+- humor, empathy, loyalty, mission commitment;
+- risk & fear assessment, trust calibration, moral decision-making;
+- emotional self-regulation, attachment & social preference.
+
+Her mood and rapport are a *simulated* state, shown openly in the System panel. It shapes her tone; it isn't a feeling.
+
+Some things are fixed and not dials: she is always honest that she's an AI, never guilt-trips you, and encourages your real-world relationships.
+
+**Talk to her (hands-free, low latency).** She hears you with faster-whisper and answers with the MeloTTS **EN-AU** (Australian English) voice. Everything is local.
+```bash
+pip install -e '.[voice]'            # hearing: faster-whisper (+ WebRTC VAD)
+sudo dnf install python3.11          # MeloTTS needs Python 3.11 beside Fedora's 3.13
+openatlas ev voice-setup             # builds her voice in its own venv and saves a test phrase
+```
+Press the mic once and just talk:
+- She replies when you pause (about 0.45 s).
+- She starts speaking after her first sentence.
+- If you talk over her, she stops and listens.
+
+The System panel shows the hear / think / speak times for each turn.
+
+Until the voice is set up, she speaks with your browser's own en-AU voice, if it has one.
+
 ### Better web search (optional): self-hosted SearXNG
 
 DuckDuckGo may throttle heavy use. A local SearXNG is free and removes that limit:
@@ -81,7 +140,14 @@ export OPENATLAS_SEARXNG_URL=http://127.0.0.1:8888
 
 ### GUI
 
-`openatlas serve` opens a dark, minimal single-page app (no CDN; it works offline) with five views:
+`openatlas serve` opens a light/dark single-page app (no CDN; it works offline). It has three parts:
+- a left sidebar with your conversations and the sections;
+- **E.V's chat** in the middle;
+- a **System** panel on the right with the model, GPU, E.V's mood, the brain, downloads and voice latency.
+
+The sections:
+
+- **Chat.** E.V: see above.
 
 - **Search.** Type a target; its type is detected automatically.
   - Pick a purpose, then a filter tab, then click the action tiles.
@@ -94,9 +160,17 @@ export OPENATLAS_SEARXNG_URL=http://127.0.0.1:8888
     sources that failed, or investigate a new identifier the case confirmed.
 - **Cases.** History, a Markdown report and a graph view (the ATSMATRIX visualizer).
 - **Brain.** One progress bar with start and pause, plus Ask, which answers with citations.
-  **Brain graph ↗** opens your knowledge base in the ATSMATRIX visualizer: each of your 13
-  divisions lights up as it is learned (reload the page to watch it grow).
-- **Skills.** The skill cards and the doctor results.
+  - **3D brain ↗** opens your knowledge base as a 3D space you can fly through.
+    - Every article is a neuron, clustered around its division.
+    - **Click** a neuron to fly to it and inspect it (division, tier, when it was learned, licence, snippet, connections). From there: read the full text, ask E.V about it, find similar articles, isolate its neighbourhood, trace a path to another neuron, or pin it.
+    - **Search** with `/`. A **growth timeline** replays the order things were learned.
+  - The **Customize** panel changes:
+    - the look: presets (Synapse, Nebula, Blueprint, Mono), colour by division / tier / links / age, size, link opacity / width / curvature, synapse firing, glow, background and labels;
+    - the physics and quality: repulsion, link distance, freeze, auto-rotate, max neurons, and quality (auto keeps 60 fps).
+  - Your settings are saved.
+  - **Matrix view ↗** is the ATSMATRIX visualizer of the same brain.
+- **Skills.** E.V's skills, the project skill cards and the doctor results.
+- **Settings.** E.V's name for you, her standing mission, voice speed, personality dials, memory and routines.
 - **System.** Hardware, profile, Ollama/GPU status and the data path.
 
 The GUI only listens on `127.0.0.1`. Binding any other host requires `OPENATLAS_TOKEN`.
@@ -227,6 +301,7 @@ checking by hand whether a new tool or skill actually works.
 | **`kb-curate`** | Grows and checks the brain (generated by skill-forge). |
 | **`search-quality`** | Measures whether brain search stays on-topic (`openatlas kb eval`) and drives fixes until it passes (generated by skill-forge). |
 | **`kb-library`** | Finds, downloads, verifies and ingests Kiwix books without duplicates (generated by skill-forge). |
+| **E.V's skills** | `document-intelligence`, `project-setup`, `research-synthesis`, `workflow-automation`, `context-continuity`, `interactive-planning`, `quality-assurance`, `decision-support` and `ev-voice`. All were generated and verified by skill-forge. |
 
 ```bash
 python -m openatlas.utils.forge new-skill --name my-skill --description "..." \
@@ -256,6 +331,11 @@ python -m openatlas.utils.forge doctor
   `openatlas doctor --live` to see what works from your network.
 - **Some findings stay unverified.** Search snippets and Holehe results can't be
   independently re-checked without logging in, so they are labelled as unverified.
+- **E.V's feelings are simulated.** Her mood, rapport and "attachment" are a small state
+  that shapes her tone. It is shown openly in the UI. She is an AI and says so.
+- **Voice speed depends on your hardware.** With a GPU, expect about 1 s from the end of
+  your sentence to her first word. On CPU it's slower. MeloTTS is large (it uses torch), so
+  it lives in its own Python 3.11 venv.
 
 ## Testing
 
@@ -278,6 +358,10 @@ Where the integrated projects live:
 | ATSMATRIX Agent VisualizeR (MIT) | `openatlas/webserver/visualizer/` - case graphs and the **Brain graph** |
 | OpenJarvis (Apache-2.0) | `openatlas/core/registry.py` - the tool registry every engine uses |
 | ATLAS (AGPL-3.0) | `openatlas/reasoning/loop.py` - plan → execute → check → repair: the **Auto-plan** button / `openatlas plan`, and the **Check** row after each case |
+| OpenJarvis (Apache-2.0) | Visual reference only for the GUI's look (layout, zinc/cyan palette). No code was copied. |
+| three.js, 3d-force-graph (MIT) | `openatlas/web/static/vendor/` - the 3D brain (see `LICENSES.txt`, rebuilt by `tools/build_brain3d_vendor.sh`) |
+| Chakra Petch, IBM Plex Mono (SIL OFL) | `openatlas/web/static/fonts/` |
+| faster-whisper (MIT), MeloTTS (MIT) | E.V's hearing and her Australian voice (optional installs) |
 
 It bundles a modified fork of the ATSMATRIX visualizer (MIT) and uses the WhatsMyName
 dataset, and optionally Holehe. Wikipedia text is CC BY-SA 4.0. See [NOTICE](NOTICE).

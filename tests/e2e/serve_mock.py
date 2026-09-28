@@ -83,6 +83,25 @@ def kiwix(req: httpx.Request) -> httpx.Response:
     return httpx.Response(404)
 
 
+def synthetic_brain(n: int) -> None:
+    """Seed topics from the real taxonomy (tagged like the ingester does), for the 3D brain."""
+    import random
+
+    from openatlas.kb import store, taxonomy
+
+    rnd = random.Random(7)
+    seeds = taxonomy.parse()
+    docs = []
+    for i, s in enumerate(seeds[:n]):
+        tier = 0 if i % 5 else rnd.choice([1, 2, 3])
+        tags = list(s["namespaces"]) + (["seed"] if tier == 0 else []) + [f"tier:{tier}"]
+        docs.append({"key": f"wikipedia:{s['title']}", "source": "wikipedia", "title": s["title"],
+                     "text": f"{s['title']} is a field of study in {', '.join(s['divisions'])}. " * 3,
+                     "url": "https://en.wikipedia.org/wiki/" + s["title"].replace(" ", "_"),
+                     "license": "CC BY-SA 4.0", "tags": tags})
+    store.upsert_many(docs)
+
+
 def handler(req: httpx.Request) -> httpx.Response:
     url = str(req.url)
     if url.startswith("https://keybase.io/_/api/1.0/user/lookup.json"):
@@ -98,5 +117,6 @@ if __name__ == "__main__":
     net_client.TRANSPORT = httpx.MockTransport(handler)
     library.TRANSPORT = httpx.MockTransport(kiwix)
     evaluate.load_fixture_corpus()  # a small brain with look-alike articles
+    synthetic_brain(1500)  # ...plus real taxonomy seeds, so the 3D brain has something to show
     robots._fetch_text = lambda *a, **k: None
     sys.exit(serve(port=8611, open_browser=False))

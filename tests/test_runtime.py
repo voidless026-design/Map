@@ -71,7 +71,9 @@ def _fake_ollama(monkeypatch, *, loaded=None, delay=0.05):
     state = {"active": 0, "peak": 0, "chats": 0, "unloaded": []}
     lock = threading.Lock()
 
-    def fake_post(url, json=None, **kw):
+    def fake_req(method, url, json=None, **kw):
+        if method == "GET":  # /api/tags: the models this fake Ollama has pulled
+            return httpx.Response(200, json={"models": [{"name": "llama3.1:8b"}, {"name": "llama3.2:3b"}]})
         if url.endswith("/api/generate") and json.get("keep_alive") == 0:
             state["unloaded"].append(json["model"])
             return httpx.Response(200, json={})
@@ -87,7 +89,7 @@ def _fake_ollama(monkeypatch, *, loaded=None, delay=0.05):
 
     monkeypatch.setattr(ollama_client, "ping", lambda *a, **k: True)
     monkeypatch.setattr(ollama_client, "loaded_models", lambda: loaded or [])
-    monkeypatch.setattr(ollama_client.httpx, "post", fake_post)
+    monkeypatch.setattr(ollama_client, "_req", fake_req)
     monkeypatch.setattr(limits, "available_ram_gb", lambda: 64.0)
     return state
 

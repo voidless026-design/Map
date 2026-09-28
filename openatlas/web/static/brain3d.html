@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenAtlas · 3D brain</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%2322d3ee'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/static/app.css">
+  <style>
+    html, body { background: #05070a; }
+    body { overflow: hidden; }
+    #graph { position: fixed; inset: 0; }
+    .hudbar { position: fixed; top: 12px; left: 12px; right: 12px; display: flex; gap: 10px; align-items: center; z-index: 5; pointer-events: none; }
+    .hudbar > * { pointer-events: auto; }
+    .glass { background: rgba(14, 17, 22, .72); border: 1px solid rgba(255, 255, 255, .09); backdrop-filter: blur(14px);
+      border-radius: 13px; color: #e8edf2; box-shadow: 0 18px 40px -16px rgb(0 0 0 / .7); }
+    .brand3d { display: flex; align-items: center; gap: 10px; padding: 8px 14px; font: 600 15px var(--display); }
+    .brand3d b { color: #22d3ee; }
+    .stat3d { font: 500 12px var(--mono); color: #9aa6b2; padding: 9px 12px; }
+    .search3d { display: flex; align-items: center; gap: 8px; padding: 6px 10px; min-width: 300px; }
+    .search3d input { flex: 1; background: none; border: 0; outline: none; color: #e8edf2; font-size: 14px; }
+    .search3d svg { color: #9aa6b2; }
+    .results3d { position: absolute; top: 46px; left: 0; right: 0; max-height: 320px; overflow: auto; padding: 4px; }
+    .results3d button { display: block; width: 100%; text-align: left; background: none; border: 0; color: #e8edf2; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+    .results3d button:hover { background: rgba(34, 211, 238, .12); }
+    .results3d small { color: #7b8794; font-family: var(--mono); }
+    .side { position: fixed; top: 64px; bottom: 12px; width: 320px; z-index: 5; overflow-y: auto; padding: 14px 16px; }
+    #inspector { left: 12px; }
+    #custom { right: 12px; }
+    .side h3 { font: 600 17px/1.25 var(--display); margin: 2px 0 6px; }
+    .side .sec { font: 600 10.5px/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: #6b7785; margin: 16px 0 8px; }
+    .side .row3 { display: grid; grid-template-columns: 110px 1fr 40px; gap: 8px; align-items: center; margin: 7px 0; font-size: 12.5px; color: #c3ccd5; }
+    .side .row3 .v { font: 11px var(--mono); color: #8b97a4; text-align: right; }
+    .side select, .side input[type=color] { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); color: #e8edf2; border-radius: 7px; padding: 4px 6px; width: 100%; }
+    .side input[type=range] { accent-color: #22d3ee; width: 100%; }
+    .seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; }
+    .seg button { background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.1); color: #c3ccd5; border-radius: 8px; padding: 7px 0; cursor: pointer; font-size: 12px; }
+    .seg button.on { background: rgba(34,211,238,.18); border-color: #22d3ee; color: #fff; }
+    .tog { display: flex; align-items: center; justify-content: space-between; margin: 8px 0; font-size: 12.5px; color: #c3ccd5; }
+    .tog input { accent-color: #22d3ee; width: 16px; height: 16px; }
+    .meta3d { display: grid; grid-template-columns: 86px 1fr; gap: 4px 10px; font-size: 12.5px; margin-top: 10px; }
+    .meta3d div:nth-child(odd) { color: #7b8794; font: 11.5px var(--mono); }
+    .snip3d { color: #c3ccd5; font-size: 13px; line-height: 1.55; margin-top: 12px; white-space: pre-wrap; }
+    .nbrs button { display: flex; width: 100%; gap: 8px; align-items: center; background: none; border: 0; color: #d6dde4; padding: 5px 4px; border-radius: 7px; cursor: pointer; text-align: left; font-size: 12.5px; }
+    .nbrs button:hover { background: rgba(255,255,255,.06); }
+    .sw { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+    .acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .acts .btn { background: rgba(255,255,255,.06); color: #e8edf2; border-color: rgba(255,255,255,.14); box-shadow: none; font-size: 12px; padding: 6px 10px; }
+    .acts .btn:hover { border-color: #22d3ee; }
+    .acts .btn.on { background: rgba(34,211,238,.2); border-color: #22d3ee; }
+    .legend { display: flex; flex-wrap: wrap; gap: 4px 10px; font-size: 11.5px; color: #aab5c0; }
+    .legend span { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; }
+    .legend span.off { opacity: .35; }
+    .timeline { position: fixed; left: 344px; right: 344px; bottom: 12px; z-index: 5; padding: 10px 14px; display: flex; gap: 12px; align-items: center; font: 12px var(--mono); color: #9aa6b2; }
+    .timeline input { flex: 1; accent-color: #22d3ee; }
+    .fps { font: 11px var(--mono); color: #6b7785; }
+    .hint3d { color: #7b8794; font-size: 12.5px; line-height: 1.55; }
+    .tip3d { position: fixed; pointer-events: none; z-index: 9; padding: 6px 9px; font-size: 12.5px; }
+    .collapsed { transform: translateX(calc(100% + 20px)); } #inspector.collapsed { transform: translateX(calc(-100% - 20px)); }
+    .side { transition: transform .22s ease; }
+    .loading3d { position: fixed; inset: 0; display: grid; place-items: center; color: #9aa6b2; font: 14px var(--mono); z-index: 3; }
+    @media (max-width: 900px) { .side { width: calc(100vw - 24px); top: auto; height: 46vh; } .timeline { left: 12px; right: 12px; bottom: auto; top: 64px; } }
+  </style>
+</head>
+<body>
+  <div id="graph"></div>
+  <div class="loading3d" id="loading"><div><span class="spin"></span> growing the neurons…</div></div>
+  <div class="hudbar">
+    <div class="glass brand3d"><span class="orb sm"></span><span>Open<b>Atlas</b> · brain</span></div>
+    <div class="glass search3d" style="position:relative">
+      <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.5-4.5"/></svg>
+      <input id="find" placeholder="Find a neuron…  ( / )" autocomplete="off">
+      <div class="glass results3d hidden" id="results"></div>
+    </div>
+    <div class="glass stat3d" id="stat">—</div>
+    <div class="grow"></div>
+    <button class="glass btn ghost" id="toggle-inspector" style="color:#e8edf2">Inspector</button>
+    <button class="glass btn ghost" id="toggle-custom" style="color:#e8edf2">Customize</button>
+    <a class="glass btn ghost" href="/" style="color:#e8edf2">Back to Atlas</a>
+  </div>
+
+  <aside class="glass side" id="inspector" aria-label="Neuron inspector">
+    <div id="insp-empty" class="hint3d">
+      <h3>Explore your brain</h3>
+      Every point is an article E.V has learned; the bright hubs are your divisions of knowledge.<br><br>
+      <b>Drag</b> to orbit · <b>scroll</b> to zoom · <b>right-drag</b> to pan<br>
+      <b>Click</b> a neuron to fly to it and inspect it · <b>hover</b> for its name<br>
+      <b>/</b> to search · <b>Esc</b> to clear · <b>F</b> to fit everything
+      <div class="sec">Divisions (click to hide/show)</div>
+      <div class="legend" id="legend"></div>
+    </div>
+    <div id="insp" class="hidden">
+      <div class="row" style="gap:8px"><span class="sw" id="insp-sw"></span><span class="mono small" id="insp-kind" style="color:#8b97a4"></span></div>
+      <h3 id="insp-title"></h3>
+      <div class="meta3d" id="insp-meta"></div>
+      <div class="acts" id="insp-acts"></div>
+      <div class="snip3d" id="insp-snip"></div>
+      <div class="sec" id="insp-nbr-h">Connected neurons</div>
+      <div class="nbrs" id="insp-nbrs"></div>
+      <div class="sec hidden" id="path-h">Path</div>
+      <div class="hint3d hidden" id="path-out"></div>
+    </div>
+  </aside>
+
+  <aside class="glass side" id="custom" aria-label="Customize">
+    <div class="row" style="justify-content:space-between"><h3>Customize</h3><span class="fps" id="fps"></span></div>
+    <div class="sec">Preset</div>
+    <div class="seg" id="presets"></div>
+    <div class="sec">Neurons</div>
+    <div class="row3"><span>Colour by</span><select id="c-colorBy"><option value="division">division</option><option value="tier">tier</option><option value="degree">connections</option><option value="age">age learned</option></select><span></span></div>
+    <div class="row3"><span>Size</span><input type="range" id="c-nodeSize" min="0.4" max="3" step="0.1"><span class="v"></span></div>
+    <div class="row3"><span>Size by links</span><input type="range" id="c-sizeByDegree" min="0" max="1" step="0.05"><span class="v"></span></div>
+    <div class="row3"><span>Opacity</span><input type="range" id="c-nodeOpacity" min="0.2" max="1" step="0.05"><span class="v"></span></div>
+    <div class="sec">Synapses</div>
+    <div class="row3"><span>Opacity</span><input type="range" id="c-linkOpacity" min="0" max="1" step="0.02"><span class="v"></span></div>
+    <div class="row3"><span>Width</span><input type="range" id="c-linkWidth" min="0" max="2" step="0.1"><span class="v"></span></div>
+    <div class="row3"><span>Curvature</span><input type="range" id="c-curvature" min="0" max="0.6" step="0.05"><span class="v"></span></div>
+    <div class="tog"><span>Synapse firing</span><input type="checkbox" id="c-firing"></div>
+    <div class="row3"><span>Firing speed</span><input type="range" id="c-firingSpeed" min="0.002" max="0.03" step="0.002"><span class="v"></span></div>
+    <div class="sec">Look</div>
+    <div class="tog"><span>Glow (bloom)</span><input type="checkbox" id="c-bloom"></div>
+    <div class="row3"><span>Glow strength</span><input type="range" id="c-bloomStrength" min="0" max="3" step="0.1"><span class="v"></span></div>
+    <div class="row3"><span>Background</span><input type="color" id="c-bg"><span></span></div>
+    <div class="row3"><span>Labels</span><select id="c-labels"><option value="hubs">hubs</option><option value="none">none</option><option value="hover">on hover only</option></select><span></span></div>
+    <div class="tog"><span>Auto-rotate</span><input type="checkbox" id="c-rotate"></div>
+    <div class="sec">Physics</div>
+    <div class="row3"><span>Repulsion</span><input type="range" id="c-charge" min="-200" max="-5" step="5"><span class="v"></span></div>
+    <div class="row3"><span>Link distance</span><input type="range" id="c-distance" min="5" max="120" step="5"><span class="v"></span></div>
+    <div class="tog"><span>Freeze layout</span><input type="checkbox" id="c-freeze"></div>
+    <div class="sec">Quality</div>
+    <div class="row3"><span>Max neurons</span><select id="c-limit"><option>500</option><option>1500</option><option>3000</option><option>6000</option><option>12000</option></select><span></span></div>
+    <div class="row3"><span>Detail</span><select id="c-quality"><option value="auto">auto (keeps 60 fps)</option><option value="high">high</option><option value="low">low (fast)</option></select><span></span></div>
+    <div class="acts"><button class="btn" id="reset">Reset to defaults</button><button class="btn" id="fit">Fit view</button></div>
+  </aside>
+
+  <div class="glass timeline" id="timeline">
+    <span>growth</span><input type="range" id="tl" min="0" max="1000" value="1000" aria-label="Growth timeline">
+    <button class="btn ghost sm" id="tl-play" style="color:#e8edf2">▶ replay</button><span id="tl-when">now</span>
+  </div>
+  <div class="glass tip3d hidden" id="tip"></div>
+
+  <script src="/static/vendor/brain3d.vendor.js"></script>
+  <script src="/static/brain3d.js"></script>
+</body>
+</html>

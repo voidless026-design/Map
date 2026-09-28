@@ -27,7 +27,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from openatlas.config import Config
 from openatlas.core.database import db_funcs
-from openatlas.runtime import profiles
 
 CLUSTERS = ["DISCOVERY", "VERIFICATION", "REASONING", "SYNTHESIS"]
 
@@ -65,6 +64,14 @@ _MAX_FINDINGS_PER_RUN = 8
 _LABEL_MAX = 60
 # Keys that carry no investigative value as standalone findings.
 _NOISE_KEYS = {"result", "reason", "note", "truncated", "text", "raw_description"}
+
+
+def _llm_model() -> str:
+    """The model the visualizer's chat should ask: one that is really installed (asking for a
+    model Ollama doesn't have is what produced "HTTP 404")."""
+    from openatlas.llm import ollama_client
+
+    return ollama_client.text_model()
 
 
 def _short(value: Any, n: int = _LABEL_MAX) -> str:
@@ -205,7 +212,7 @@ def build_graph(session_id: Optional[str] = None) -> Dict[str, Any]:
             "created_at": session.get("created_at"),
             "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
             "ollama_host": Config.llm.host,
-            "model": profiles.active().text_model,
+            "model": _llm_model(),
         },
         "clusters": CLUSTERS,
         "nodes": nodes,
@@ -323,7 +330,7 @@ def build_graph_from_case(report: Dict[str, Any]) -> Dict[str, Any]:
     events.append({"tag": "SYNTH", "msg": f"case {report.get('case_id')} assembled", "phase": 5})
     return {"meta": {"source": "OpenAtlas case", "session_id": report.get("case_id"),
                      "target": t.get("value"), "ollama_host": Config.llm.host,
-                     "model": profiles.active().text_model},
+                     "model": _llm_model()},
             "clusters": CLUSTERS, "nodes": nodes, "edges": edges, "events": events}
 
 
@@ -421,5 +428,99 @@ def build_graph_from_brain() -> Dict[str, Any]:
     return {"meta": {"source": "OpenAtlas brain", "session_id": "brain",
                      "target": "knowledge base", "created_at": None,
                      "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
-                     "ollama_host": Config.llm.host, "model": profiles.active().text_model},
+                     "ollama_host": Config.llm.host, "model": _llm_model()},
             "clusters": CLUSTERS, "nodes": nodes, "edges": edges, "events": events}
+
+
+# ---------------------------------------------------------------------------- 3D brain
+BRAIN3D_LIMIT = 3000
+
+
+def build_brain3d(limit: int = BRAIN3D_LIMIT) -> Dict[str, Any]:
+    """The brain as a 3D neuron graph for ``/viz/brain3d``.
+
+    * **hubs** - one per division of your fields of study (plus Vital articles, Kiwix books,
+      Asked-about and Cases when present), all wired to a central "brain" node;
+    * **neurons** - articles, capped at ``limit`` (your seed topics first, then the newest), each
+      carrying its division, tier, when it was learned, source, licence and a short snippet;
+    * **synapses** - neuron -> its division hub(s) (an article in two divisions bridges them),
+      and neurons in the same area chained together so related topics cluster.
+
+    Queries are bounded by ``limit``, so this stays fast on a multi-GB brain."""
+    from openatlas.kb import store, taxonomy
+
+    limit = max(50, min(int(limit or BRAIN3D_LIMIT), 20000))
+    divisions = taxonomy.divisions(taxonomy.parse())
+    nodes: List[Dict[str, Any]] = [{"id": "brain", "kind": "core", "label": "Brain", "group": "core", "size": 14}]
+    links: List[Dict[str, Any]] = []
+    hubs: Dict[str, Dict[str, Any]] = {}
+
+    def hub(hid: str, label: str, group: str) -> str:
+        if hid not in hubs:
+            hubs[hid] = {"id": hid, "kind": "hub", "label": label, "group": group, "count": 0}
+            nodes.append(hubs[hid])
+            links.append({"source": "brain", "target": hid, "kind": "core"})
+        return hid
+
+    for name in divisions:
+        hub(f"domain:{taxonomy.slugify(name)}", name, taxonomy.slugify(name))
+    with store.connect() as con:
+        total = con.execute("SELECT COUNT(*) FROM documents").fetchone()[0]
+        docs = con.execute(
+            "SELECT d.id, d.key, d.title, d.url, d.source, d.license, d.fetched_at, d.chars, "
+            "EXISTS(SELECT 1 FROM doc_tags s WHERE s.doc_id=d.id AND s.tag='seed') AS seed "
+            "FROM documents d ORDER BY seed DESC, d.id DESC LIMIT ?", (limit,)).fetchall()
+        ids = [d["id"] for d in docs]
+        tags: Dict[int, List[str]] = {}
+        snippets: Dict[int, str] = {}
+        for i in range(0, len(ids), 900):
+            part = ids[i:i + 900]
+            marks = ",".join("?" * len(part))
+            for r in con.execute(f"SELECT doc_id, tag FROM doc_tags WHERE doc_id IN ({marks})", part):
+                tags.setdefault(r["doc_id"], []).append(r["tag"])
+            for r in con.execute(f"SELECT doc_id, substr(text, 1, 320) AS s FROM chunks "
+                                 f"WHERE ord=0 AND doc_id IN ({marks})", part):
+                snippets[r["doc_id"]] = r["s"]
+    by_area: Dict[str, List[str]] = {}
+    for d in docs:
+        t = tags.get(d["id"], [])
+        tier = next((int(x.split(":")[1]) for x in t if x.startswith("tier:") and x[5:].isdigit()), 0)
+        doms = [x for x in t if x.startswith("domain:") and x in hubs]
+        if d["source"] == "case":
+            doms = [hub("cases", "Your cases", "cases")]
+        if not doms:
+            kiwix = next((x for x in t if x.startswith("kiwix:")), None)
+            if kiwix:
+                doms = [hub(kiwix, "Kiwix: " + kiwix[6:], "kiwix")]
+            elif "on-demand" in t:
+                doms = [hub("on-demand", "Asked about", "asked")]
+            elif any(x.startswith("vital:") for x in t):
+                doms = [hub("vital", "Vital articles", "vital")]
+            else:
+                doms = [hub("other", "Other", "other")]
+        nid = f"n{d['id']}"
+        nodes.append({"id": nid, "kind": "neuron", "label": d["title"], "group": hubs[doms[0]]["group"],
+                      "division": hubs[doms[0]]["label"], "tier": tier, "seed": bool(d["seed"]),
+                      "learned": d["fetched_at"], "source": d["source"], "url": d["url"] or "",
+                      "license": d["license"] or "", "key": d["key"], "chars": d["chars"] or 0,
+                      "snippet": (snippets.get(d["id"]) or "").strip()})
+        for h_ in doms:
+            hubs[h_]["count"] += 1
+            links.append({"source": nid, "target": h_, "kind": "hub"})
+        for x in t:
+            if x.startswith("area:"):
+                by_area.setdefault(x, []).append(nid)
+        if len(doms) > 1:
+            links.append({"source": doms[0], "target": doms[1], "kind": "bridge"})
+    for members in by_area.values():  # related topics cluster: chain each area's neurons
+        for a, b in zip(members, members[1:]):
+            links.append({"source": a, "target": b, "kind": "area"})
+    degree: Dict[str, int] = {}
+    for ln in links:
+        degree[ln["source"]] = degree.get(ln["source"], 0) + 1
+        degree[ln["target"]] = degree.get(ln["target"], 0) + 1
+    for n in nodes:
+        n["degree"] = degree.get(n["id"], 0)
+    return {"meta": {"articles": total, "shown": len(docs), "limit": limit, "hubs": len(hubs),
+                     "generated_at": _dt.datetime.now(_dt.timezone.utc).isoformat()},
+            "nodes": nodes, "links": links}

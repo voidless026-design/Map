@@ -9,7 +9,7 @@ const PURPOSES = ["Self-audit (my own footprint)", "Security research", "Due dil
 
 const state = {
   catalog: { filters: [], actions: [] }, filter: "", selected: [], detected: null,
-  forcedType: "", purpose: "", showTools: false, view: "investigate", activeCase: null, token: sessionStorage.getItem("oa-token") || "",
+  forcedType: "", purpose: "", showTools: false, view: "chat", activeCase: null, token: sessionStorage.getItem("oa-token") || "",
 };
 
 // ------------------------------------------------------------------ helpers
@@ -64,7 +64,9 @@ function show(view) {
   state.view = view;
   document.querySelectorAll(".nav").forEach((b) => b.classList.toggle("on", b.dataset.view === view));
   document.querySelectorAll("main > section").forEach((s) => s.classList.toggle("hidden", s.id !== "v-" + view));
-  $("#view-title").textContent = { investigate: "Investigate", cases: "Cases", brain: "Brain", library: "Library", skills: "Skills", system: "System" }[view];
+  $("#view-title").textContent = { chat: "Chat", investigate: "Investigate", cases: "Cases", brain: "Brain", library: "Library",
+    skills: "Skills", settings: "Settings", system: "System" }[view];
+  if (window.EV) window.EV.onShow(view);
   if (view === "library") loadLibrary();
   if (view === "cases") loadCases();
   if (view === "brain") loadBrain();
@@ -73,16 +75,30 @@ function show(view) {
 }
 document.querySelectorAll(".nav").forEach((b) => b.addEventListener("click", () => show(b.dataset.view)));
 $("#theme").addEventListener("click", () => {
-  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+  const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  const next = cur === "light" ? "dark" : "light";
   document.documentElement.dataset.theme = next; try { localStorage.setItem("oa-theme", next); } catch {}
 });
+function toggleSys(force) {
+  const root = document.documentElement;
+  const wide = matchMedia("(min-width: 1181px)").matches;
+  const shown = root.dataset.sys ? root.dataset.sys === "on" : wide;
+  const next = force != null ? force : !shown;
+  root.dataset.sys = next ? "on" : "off"; try { localStorage.setItem("oa-sys", next ? "1" : "0"); } catch {}
+}
+$("#sys-toggle").addEventListener("click", () => toggleSys());
+$("#sys-close").addEventListener("click", () => toggleSys(false));
 
 // ------------------------------------------------------------------ investigate: target + purpose
 const qEl = $("#q");
 let detectTimer;
 qEl.addEventListener("input", () => { clearTimeout(detectTimer); detectTimer = setTimeout(detectType, 250); });
 qEl.addEventListener("keydown", (e) => { if (e.key === "Enter") runSelected(); });
-document.addEventListener("keydown", (e) => { if (e.key === "/" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); show("investigate"); qEl.focus(); } });
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "/" || ["INPUT", "TEXTAREA"].includes(document.activeElement.tagName)) return;
+  e.preventDefault();
+  if (state.view === "investigate") qEl.focus(); else if (state.view === "chat") $("#chat-search").focus(); else { show("chat"); $("#chat-input").focus(); }
+});
 
 async function detectType() {
   const v = qEl.value.trim();
@@ -509,5 +525,4 @@ async function loadPills() {
   state.catalog = await api("/api/catalog");
   renderAll(); loadPills();
   setInterval(() => { if (!document.hidden) { loadPills(); if (state.view === "brain") loadBrain(); } }, 15000);
-  qEl.focus();
 })();
