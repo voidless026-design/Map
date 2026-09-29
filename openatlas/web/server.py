@@ -119,6 +119,11 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
         resp = await call_next(request)
         resp.headers["X-Content-Type-Options"] = "nosniff"
         resp.headers["Referrer-Policy"] = "no-referrer"
+        path = request.url.path
+        if (path == "/" or path.startswith(("/static/", "/viz/"))) and "cache-control" not in resp.headers:
+            # without it Firefox keeps old pages/scripts by heuristic caching, so an update
+            # (git pull) doesn't show; revalidating by ETag on loopback costs next to nothing
+            resp.headers["Cache-Control"] = "no-cache"
         return resp
 
     # ---------------- pages ----------------
@@ -140,6 +145,14 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
     async def viz_brain3d() -> FileResponse:
         """The brain as a customizable 3D space of neurons (data from /api/brain/graph3d)."""
         return FileResponse(STATIC / "brain3d.html")
+
+    @app.get("/api/brain/gpu")
+    async def brain_gpu() -> Dict[str, Any]:
+        """This PC's display driver, read from /sys (the browser often hides it): the 3D brain
+        shows the fix when it's the slow open 'nouveau' driver on an NVIDIA card."""
+        from openatlas.runtime import resources
+
+        return await asyncio.to_thread(resources.brain3d_advice)
 
     @app.get("/api/brain/graph3d")
     async def brain_graph3d(limit: int = 3000) -> Dict[str, Any]:

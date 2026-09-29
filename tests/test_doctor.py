@@ -233,3 +233,49 @@ def test_link_outside_the_project_fails_installation_with_a_move_line(tmp_path, 
     status, detail = doctor.check_installation()
     assert status == "fail" and "will fail" in detail and "python3" in detail
     assert f"mv '{pkg / 'openatlas'}' ~/openatlas-old-copy/" in detail and "rm -rf" not in detail
+
+
+def _fake_drm(root, card, vendor, device, driver):
+    dev = root / card / "device"
+    dev.mkdir(parents=True)
+    (dev / "vendor").write_text(f"0x{vendor:04x}\n")
+    (dev / "device").write_text(f"0x{device:04x}\n")
+    if driver:
+        (root / "drivers" / driver).mkdir(parents=True, exist_ok=True)
+        (dev / "driver").symlink_to(root / "drivers" / driver)
+
+
+def test_graphics_check_spots_nouveau_on_a_gtx_770(tmp_path):
+    """The user's PC: GTX 770 (10de:1184, Kepler) on Fedora's open nouveau driver."""
+    from openatlas.runtime import resources
+
+    assert doctor.check_graphics(str(tmp_path / "none"))[0] == "pass"  # no display GPU (servers, CI)
+    _fake_drm(tmp_path, "card0", 0x10DE, 0x1184, "nouveau")
+    a = resources.brain3d_advice(str(tmp_path))
+    assert a["issue"] == "nouveau" and a["kepler"] and "GTX 770" in a["message"]
+    assert "echo 0f > /sys/kernel/debug/dri/0/pstate" in a["steps"][1] and "gfx.webrender.all" in a["steps"][2]
+    status, detail = doctor.check_graphics(str(tmp_path))
+    assert status == "warn" and "pstate" in detail and "10de:1184 (nouveau)" in detail
+
+
+def test_graphics_check_passes_with_a_proper_driver(tmp_path):
+    from openatlas.runtime import resources
+
+    _fake_drm(tmp_path, "card1", 0x10DE, 0x1184, "nvidia")
+    _fake_drm(tmp_path, "card0", 0x8086, 0x3E92, "i915")
+    assert resources.brain3d_advice(str(tmp_path))["issue"] == ""
+    status, detail = doctor.check_graphics(str(tmp_path))
+    assert status == "pass" and "(nvidia)" in detail and "(i915)" in detail
+
+
+def test_pages_and_scripts_are_revalidated_so_updates_show():
+    """Without Cache-Control Firefox kept the old brain3d.js after `git pull`."""
+    from fastapi.testclient import TestClient
+
+    from openatlas.web.server import create_app
+
+    with TestClient(create_app()) as c:
+        for path in ("/", "/viz/brain3d", "/static/brain3d.js", "/static/app.js"):
+            r = c.get(path)
+            assert r.status_code == 200 and r.headers.get("cache-control") == "no-cache", path
+        assert c.get("/api/brain/gpu").json()["issue"] in ("", "nouveau")

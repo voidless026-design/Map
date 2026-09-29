@@ -93,7 +93,9 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   await b3.waitForFunction(() => window.BRAIN3D.stats().calls > 0 && window.BRAIN3D.stats().pulses > 0, null, { timeout: 30000 });
   const st = await b3.evaluate(() => window.BRAIN3D.stats());
   ok(st.calls < 80 && st.neurons === n3, `batched rendering: ${st.calls} draw calls for ${st.neurons} neurons, ${st.pulses} synapse pulses firing`);
-  // pointing at a neuron (batched, so found by our own raycast) shows its name and clicking inspects it
+  // pointing at a neuron (batched, so found by our own raycast) shows its name and clicking inspects it;
+  // take the controls first (as a user does) so the start-up auto-fit stops moving the camera
+  await b3.dispatchEvent("#graph", "wheel"); await b3.waitForTimeout(1500);
   const spot = await b3.evaluate(() => {
     const G = window.BRAIN3D.graph, ns = window.BRAIN3D.data.nodes; ns.forEach((n) => { n.fx = n.x; n.fy = n.y; n.fz = n.z; });
     const r = G.renderer().domElement.getBoundingClientRect();
@@ -114,6 +116,27 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   await b3.evaluate(() => window.BRAIN3D.select(window.BRAIN3D.data.nodes.find((n) => n.kind === "neuron" && n.degree > 2).id));
   await b3.waitForSelector("#insp:not(.hidden)");
   ok((await b3.textContent("#insp-title")).length > 2 && (await b3.$$("#insp-nbrs button")).length >= 1, "clicking a neuron opens the inspector with its connections");
+  // the graphics line is visible, the notice picks the right cause, and a slow GPU sheds cost
+  // step by step: sharpness first, then bloom at half resolution, bloom off last
+  ok((await b3.textContent("#gpu")).startsWith("GPU: "), "GPU line shown: " + await b3.textContent("#gpu"));
+  const kinds = await b3.evaluate(() => ["NVE4", "Mesa NVE4 (nouveau)", "llvmpipe (LLVM 19.1.7, 256 bits)", "NVIDIA GeForce GTX 770/PCIe/SSE2"].map(window.BRAIN3D.gpuIssue));
+  ok(JSON.stringify(kinds) === JSON.stringify(["nouveau", "nouveau", "software", ""]), "renderer strings classified: " + JSON.stringify(kinds));
+  await b3.evaluate(() => window.BRAIN3D.simulateFps(60)); await b3.waitForFunction(() => !window.BRAIN3D.stats().level, null, { timeout: 60000 });
+  const full = await b3.evaluate(() => window.BRAIN3D.stats());
+  await b3.evaluate(() => window.BRAIN3D.simulateFps(8));
+  await b3.waitForFunction(() => window.BRAIN3D.stats().level === 1, null, { timeout: 30000 });
+  const l1 = await b3.evaluate(() => window.BRAIN3D.stats());
+  ok(l1.bloom === full.bloom && l1.ratio < full.ratio, `slow GPU step 1: pixel ratio ${full.ratio} -> ${l1.ratio}, bloom untouched`);
+  await b3.waitForFunction(() => window.BRAIN3D.stats().level === 3, null, { timeout: 30000 });
+  const l3 = await b3.evaluate(() => window.BRAIN3D.stats());
+  ok(!full.bloom || (l3.bloom && l3.bloomWidth > 0 && l3.bloomWidth < l1.bloomWidth), `slow GPU step 3: bloom kept at lower resolution (${l1.bloomWidth}px -> ${l3.bloomWidth}px)`);
+  await b3.waitForFunction(() => window.BRAIN3D.stats().level === 4, null, { timeout: 60000 });
+  const l4 = await b3.evaluate(() => window.BRAIN3D.stats());
+  ok(l4.ratio < full.ratio && !l4.bloom, `slow GPU last step: pixel ratio ${full.ratio} -> ${l4.ratio}, bloom off`);
+  await b3.evaluate(() => window.BRAIN3D.simulateFps(60)); await b3.waitForFunction(() => window.BRAIN3D.stats().level === 0, null, { timeout: 90000 });
+  const back = await b3.evaluate(() => window.BRAIN3D.stats());
+  ok(back.ratio === full.ratio && back.bloom === full.bloom && back.bloomWidth === full.bloomWidth, "full look restored when the GPU keeps up");
+  await b3.evaluate(() => window.BRAIN3D.simulateFps(0));
   await b3.click("#presets button:has-text('Nebula')"); await b3.reload();
   await b3.waitForFunction(() => window.BRAIN3D && window.BRAIN3D.data, null, { timeout: 30000 });
   ok((await b3.evaluate(() => window.BRAIN3D.settings().preset)) === "Nebula", "customization persists across reloads");

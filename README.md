@@ -324,6 +324,14 @@ python -m openatlas.utils.forge doctor
 
 ## If `openatlas doctor` complains
 
+- **Graphics for the 3D brain: … nouveau …** means Fedora's open NVIDIA driver is running your
+  card at its slowest clock, which is common on older cards like the GTX 770. The 3D brain
+  will be choppy. Raise the clock until the next reboot, then reload the page:
+  `sudo cat /sys/kernel/debug/dri/0/pstate`, then `sudo sh -c 'echo 0f > /sys/kernel/debug/dri/0/pstate'`
+  (use the highest level the first command lists). In Firefox, if `about:support` shows
+  Compositing: "WebRender (Software)", set `gfx.webrender.all` to true in `about:config` and
+  restart Firefox. The 3D brain shows the same advice, and its "auto" detail setting eases off
+  sharpness and glow while the GPU can't keep up.
 - **Installation: not installed …** means the code was updated (`git pull`) but its packages
   weren't. Run the command it prints, which uses your checkout's own folder.
 - **Installation: pip install -e . will fail … links outside the project** (pip says
