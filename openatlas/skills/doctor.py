@@ -587,36 +587,23 @@ def check_ev_voice() -> Tuple[str, str]:
     return ("warn", f"{detail}; to talk with E.V: {' and '.join(missing)}") if missing else _pass(detail)
 
 
-def check_brain3d() -> Tuple[str, str]:
-    """The 3D brain builder on a throwaway brain: every link resolves, the node cap holds."""
+def check_brain_graph() -> Tuple[str, str]:
+    """The brain graph builder (2D, ATSMATRIX) on a throwaway brain: every edge resolves, articles
+    show under their division, and an article in two divisions cross-links them."""
     from openatlas.kb import store
     from openatlas.utils import knowledge_graph
 
     with _ev_sandbox():
         store.upsert_many([{"key": f"doctor:{i}", "source": "wikipedia", "title": f"Doctor topic {i}",
-                            "text": "fixture " * 30, "tags": ["domain:formal-sciences", "area:logic", "tier:0"]}
-                           for i in range(80)])
-        g = knowledge_graph.build_brain3d(limit=50)
+                            "text": "fixture " * 30, "tags": ["domain:formal-sciences", "tier:0"]
+                            + (["domain:life-sciences"] if i == 0 else [])} for i in range(5)])
+        g = knowledge_graph.build_graph_from_brain()
     ids = {n["id"] for n in g["nodes"]}
-    neurons = [n for n in g["nodes"] if n["kind"] == "neuron"]
-    ok = len(neurons) == 50 and all(ln["source"] in ids and ln["target"] in ids for ln in g["links"]) \
-        and g["meta"]["articles"] == 80
-    return _pass(f"{len(g['nodes'])} nodes / {len(g['links'])} links, capped at 50 of 80 neurons") if ok else \
-        _fail(f"3D builder: {len(neurons)} neurons, meta {g['meta']}")
-
-
-def check_graphics(root: str = "/sys/class/drm") -> Tuple[str, str]:
-    """The display driver the 3D brain will run on (Linux sysfs, no root). nouveau on an NVIDIA
-    card - especially Kepler, like the GTX 770 - stays at its slowest clock: say how to fix it."""
-    from openatlas.runtime import resources
-
-    a = resources.brain3d_advice(root)
-    if not a["gpus"]:
-        return _pass("no display GPU visible here - not checked")
-    names = ", ".join(f"{g['card']}: {g['vendor']:04x}:{g['device']:04x} ({g['driver'] or 'no driver'})" for g in a["gpus"])
-    if a["issue"] == "nouveau":
-        return "warn", f"{a['message']} Run: " + " ; ".join(a["steps"][:2]) + f". Then: {a['steps'][2]}. [{names}]"
-    return _pass(f"3D brain runs on {names}")
+    labels = {n["label"] for n in g["nodes"]}
+    ok = all(e["from"] in ids and e["to"] in ids for e in g["edges"]) and "Doctor topic 4" in labels \
+        and any(e.get("kind") == "cross-link" for e in g["edges"]) and "window.ATLAS_GRAPH" in knowledge_graph.inline_html(g)
+    return _pass(f"{len(g['nodes'])} nodes / {len(g['edges'])} edges, all linked; cross-division article bridged") if ok else \
+        _fail(f"brain graph: {len(g['nodes'])} nodes, {len(g['edges'])} edges")
 
 
 def check_ev_persona() -> Tuple[str, str]:
@@ -654,8 +641,7 @@ CHECKS: List[Check] = [
     ("E.V document reader", check_ev_documents),
     ("E.V voice pipeline", check_ev_voice),
     ("E.V persona", check_ev_persona),
-    ("3D brain builder", check_brain3d),
-    ("Graphics for the 3D brain", check_graphics),
+    ("Brain graph builder", check_brain_graph),
 ]
 
 

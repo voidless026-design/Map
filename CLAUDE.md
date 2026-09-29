@@ -45,6 +45,7 @@ must both pass (CI runs them).
   - `retrieve.py` is search-engine style: a query parser, the title/alias index (`titles`), coverage, and a relevance gate. Every hit carries `why`.
     - Any ranking change must keep `openatlas kb eval --fixture` passing. The doctor also requires the legacy ranker to fail.
   - `library.py` handles Kiwix ZIM books: the OPDS catalog, Range-resume downloads, SHA-256 verification, duplicate/update rules, and libzim ingest.
+    - Downloads run `MAX_PARALLEL` (2) at a time, one thread per book with its own stop event (`schedule()` / `control()`); pause/cancel act at once and hand the slot on. Ingest has its own thread. Worker threads run in a copied context so `store.use_path` follows them.
     - `kiwix.py` runs kiwix-serve on loopback, proxied at `/kiwix`.
     - Only https `*.kiwix.org` URLs are accepted.
     - Kiwix's `q=` search matches titles and descriptions only, never file names. Look up books by name through `find_books` / `resolve`, which page through the catalog and match file names locally.
@@ -52,19 +53,21 @@ must both pass (CI runs them).
     - Tests use `library.TRANSPORT` = `httpx.MockTransport`, plus real ZIMs built with `libzim.writer`.
 - `openatlas/utils/knowledge_graph.py` + `webserver/visualizer/atsmatrix.html` (ATSMATRIX fork) -
   case graphs (`/viz/<case>`) and the brain graph (`/viz/brain`, `openatlas kb graph`). Feed the
-  visualizer new graph builders; don't change the visualizer file itself.
+  visualizer new graph builders.
+  - The visualizer is tuned for older GPUs (batched edges, sprite glow instead of `shadowBlur`, an fps
+    cap, adaptive quality) and has a small Customize panel (localStorage `oa-brain2d`). Keep per-frame
+    work batched, and keep the default look unchanged when you edit it.
+  - There is no 3D brain any more (removed at the user's request: too slow on their GTX 770).
 - `openatlas/reasoning/loop.py` (ATLAS-inspired) - `plan_case` (Auto-plan / `openatlas plan`: proposes
   sources, a human presses Run) and `check_case` (post-case check + one repair round). Local AI when
   available, deterministic heuristic otherwise.
 - `openatlas/web/` - FastAPI + no-build SPA (`openatlas serve`, loopback only).
   - The home page is E.V's chat (`static/ev.js`). `web/ev_routes.py` has the `/api/ev/*` endpoints and the `/ws/ev/voice` WebSocket.
-  - `/viz/brain3d` (`static/brain3d.{html,js}`) is the 3D brain, built from `knowledge_graph.build_brain3d`. Its vendored bundle (`static/vendor/`) is rebuilt with `tools/build_brain3d_vendor.sh`; don't hand-edit it.
-    - Neurons, ordinary links and synapse pulses are drawn as three batched objects (about 40 draw calls instead of about 10,000). They copy 3d-force-graph's exact geometry, materials and curve maths, so the look is unchanged. Keep it that way: never go back to one three.js object per node or link, and check any visual change against the old rendering.
 - `openatlas/ev/` - E.V, the local AI companion.
   - `persona.py` holds the nine trait dials and the fixed guardrails. `state.py` is her simulated mood and trust, with self-regulation. `memory.py` handles context continuity.
   - `agent.py` runs the streaming turn: Ollama tool calls, a keyword router when the model can't call tools, and an offline fallback. `tools.py` has the registry, approval gate, ethics screen and risk appraisal.
   - `skills/*` are the eight skills. Only `read` tools auto-run; `network`, `write` and `command` tools always go through `tools.decide`.
-  - `voice.py` handles endpointing, sentence streaming and barge-in. `tts_worker.py` is MeloTTS EN-AU in its own py3.11 venv (`openatlas ev voice-setup`).
+  - `voice.py` handles endpointing, sentence streaming and barge-in. `ev.js` shows every spoken sentence as a subtitle (from `audio_start` / `say`) while it plays. `tts_worker.py` is MeloTTS EN-AU in its own py3.11 venv (`openatlas ev voice-setup`).
   - New E.V skills are generated with `forge new-skill`, and the doctor verifies their tools.
 - `openatlas/llm/ollama_client.py` always resolves the model against `/api/tags` (`resolve_model` / `diagnose`). Never hard-code a model name that might not be pulled.
 - `openatlas/cli.py` - `investigate|run|catalog|serve|cases|kb|doctor`; `openatlas/catalog.py`

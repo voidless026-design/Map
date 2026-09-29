@@ -423,10 +423,7 @@ def _kb_library(a: argparse.Namespace) -> int:
             _follow(library, library.work)
             return 0
         if op == "pause":
-            store.set_meta("library_paused", True)
-            for r in library.rows():
-                if r["status"] in ("queued", "downloading"):
-                    library.control(r["id"], "pause")
+            library.pause_all()
             print("library downloads paused (all books)")
             return 0
         ids = library.resume_all()

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import hashlib
+import threading
+import time
 from pathlib import Path
 
 import httpx
@@ -23,6 +25,7 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(Config.files, "brain_dir", tmp_path / "brain")
     store.reset_init_cache()
     yield tmp_path
+    library.shutdown()  # no worker thread outlives its test
     store.reset_init_cache()
 
 
@@ -504,3 +507,116 @@ def test_unreadable_file_is_marked_failed_not_crashing(monkeypatch):
     library.work()  # downloads (checksum OK), then tries to feed it in: must not raise
     row = library.get(rid)
     assert row["status"] == "failed" and "not a readable ZIM" in row["note"]
+
+
+# ------------------------------------------- several at once, each paused on its own
+class HeldKiwix(FakeKiwix):
+    """Books stall half-way until released - or until their row is paused/cancelled, so the
+    worker sees it on the next block (like a real stream keeps flowing)."""
+
+    def __init__(self, files):
+        super().__init__(files)
+        self.gates = {n: threading.Event() for n in files}
+        self.row_of = {}
+
+    def __call__(self, req):
+        name = str(req.url).rsplit("/", 1)[-1]
+        if name.endswith(".meta4") or name not in self.files:
+            return super().__call__(req)
+        self.requests.append((str(req.url), req.headers.get("range")))
+        start = int(req.headers["range"].split("=")[1].rstrip("-")) if req.headers.get("range") else 0
+        data, gate = self.files[name], self.gates[name]
+
+        def body():
+            for i in range(start, len(data), 1024):
+                while i >= len(data) // 2 and not gate.is_set():
+                    row = library.get(self.row_of.get(name, -1)) or {}
+                    if row.get("status") in ("paused", "cancelled"):
+                        break
+                    time.sleep(0.01)
+                yield data[i:i + 1024]
+        return httpx.Response(206 if start else 200, content=body(),
+                              headers={"content-length": str(len(data) - start)})
+
+
+def _until(cond, timeout=15.0):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if cond():
+            return True
+        time.sleep(0.02)
+    raise AssertionError("timed out waiting for the library")
+
+
+def test_two_books_download_at_once_and_each_pauses_on_its_own(monkeypatch):
+    monkeypatch.setattr(library, "CHUNK", 1024)
+    monkeypatch.setattr(library, "libzim_available", lambda: False)  # downloads only, no feeding
+    files = {f"wikipedia_en_t{i}_2026-01.zim": bytes([i + 1]) * 200_000 for i in range(3)}
+    fake = HeldKiwix(files)
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(fake))
+    names = list(files)
+    ids = [library.enqueue(book(n, len(files[n]))) for n in names]
+    fake.row_of = dict(zip(names, ids))
+
+    library.start_background()
+    _until(lambda: set(library.active()) == {ids[0], ids[1]})  # two at once, oldest first
+    assert library.get(ids[2])["status"] == "queued" and "waiting for a free slot" in library.get(ids[2])["note"]
+    assert library.summary()["max_parallel"] == 2
+
+    library.control(ids[0], "pause")  # pause the first while the second keeps going
+    _until(lambda: ids[0] not in library.active() and ids[2] in library.active())  # its slot goes to the third
+    assert library.get(ids[0])["status"] == "paused" and ids[1] in library.active()
+    assert 0 < Path(library.get(ids[0])["path"] + ".part").stat().st_size < 200_000  # kept for resuming
+
+    fake.gates[names[1]].set()
+    fake.gates[names[2]].set()
+    _until(lambda: all(library.get(i)["status"] == "ready" for i in ids[1:]))
+
+    fake.gates[names[0]].set()
+    library.control(ids[0], "resume")  # picks up from its .part
+    _until(lambda: library.get(ids[0])["status"] == "ready")
+    assert any(r and r.startswith("bytes=") for u, r in fake.requests if u.endswith(names[0]))
+    for n, i in zip(names, ids):
+        assert Path(library.get(i)["path"]).read_bytes() == files[n] and library.get(i)["note"] == "verified"
+
+
+def test_cancel_and_pause_all_resume_all(monkeypatch):
+    monkeypatch.setattr(library, "CHUNK", 1024)
+    monkeypatch.setattr(library, "libzim_available", lambda: False)
+    files = {f"wikipedia_en_c{i}_2026-01.zim": bytes([i + 7]) * 100_000 for i in range(2)}
+    fake = HeldKiwix(files)
+    monkeypatch.setattr(library, "TRANSPORT", httpx.MockTransport(fake))
+    names = list(files)
+    ids = [library.enqueue(book(n, len(files[n]))) for n in names]
+    fake.row_of = dict(zip(names, ids))
+    library.start_background()
+    _until(lambda: set(library.active()) == set(ids))
+
+    library.control(ids[0], "cancel")  # the thread that wrote the .part removes it
+    _until(lambda: ids[0] not in library.active())
+    assert library.get(ids[0])["status"] == "cancelled" and not Path(library.get(ids[0])["path"] + ".part").exists()
+
+    assert library.pause_all() == [ids[1]]
+    _until(lambda: not library.active())
+    assert library.get(ids[1])["status"] == "paused" and library.start_background() is False  # stays paused
+    fake.gates[names[1]].set()
+    assert library.resume_all() == [ids[1]]
+    library.start_background()
+    _until(lambda: library.get(ids[1])["status"] == "ready")
+
+
+def test_web_pause_all_and_resume_all(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from openatlas.web.server import create_app
+
+    monkeypatch.setattr(library, "libzim_available", lambda: False)
+    rid = library.enqueue(book("wikipedia_en_w_2026-01.zim", 10))
+    library.control(rid, "pause")
+    with TestClient(create_app()) as c:
+        assert c.post("/api/library/all/pause").status_code == 200
+        assert library.summary()["paused"] is True
+        serve(monkeypatch, {"wikipedia_en_w_2026-01.zim": b"x" * 10})
+        assert c.post("/api/library/all/resume").json()["resumed"] == [rid]
+        _until(lambda: library.get(rid)["status"] == "ready")
+        assert c.post("/api/library/all/explode").status_code == 404

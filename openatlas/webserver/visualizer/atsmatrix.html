@@ -10,6 +10,9 @@
     * Replaces the cloud LLM chat with a LOCAL Ollama call (no API key, no cloud egress).
     * Offline fallback shows an honest summary of the loaded graph (no fabricated stats).
     * Labels real knowledge nodes and replays recorded pipeline events.
+    * Fast on older graphics cards: cached glow sprites instead of per-photon shadowBlur, edges
+      batched into one stroke per colour, a frame-rate cap, and adaptive quality.
+    * A small Customize panel (saved in localStorage "oa-brain2d").
 -->
 <html lang="en">
 <head>
@@ -229,6 +232,19 @@
       color: var(--text-muted); cursor: pointer; padding: 4px 10px; border-radius: 4px;
     }
     .tab-btn.active { background: var(--ats-blue); color: #fff; }
+    .custom-panel {
+      position: absolute; top: 12px; right: 16px; width: 270px; z-index: 70; display: none;
+      background: var(--bg-panel); border: 1px solid var(--border-color); border-radius: 8px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2); padding: 12px 14px; font-size: 0.68rem;
+    }
+    .custom-panel.open { display: block; }
+    .custom-panel h4 { font-size: 0.72rem; font-weight: 800; color: var(--ats-blue); display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .custom-panel .sec { font-size: 0.56rem; font-weight: 800; color: var(--text-dim); letter-spacing: 1px; margin: 10px 0 4px; }
+    .custom-panel .row { display: grid; grid-template-columns: 1fr 1.2fr 34px; gap: 6px; align-items: center; margin: 5px 0; }
+    .custom-panel .row .v { text-align: right; color: var(--text-muted); }
+    .custom-panel select, .custom-panel input[type=range] { width: 100%; font: inherit; color: var(--text-main); background: transparent; border: 1px solid var(--border-color); border-radius: 3px; }
+    .custom-panel input[type=range] { border: none; accent-color: var(--ats-blue); }
+    .custom-panel .foot { display: flex; justify-content: space-between; align-items: center; margin-top: 10px; color: var(--text-muted); }
     .code-box {
       background: #0f172a; color: #38bdf8; padding: 12px; border-radius: 6px;
       font-family: var(--font-mono); font-size: 0.72rem; line-height: 1.45; overflow-x: auto; white-space: pre;
@@ -248,6 +264,7 @@
       <button class="btn" onclick="boostSpeed()"><span>🚀</span> <span id="speed-btn-txt">BOOST: 2X</span></button>
       <button class="btn" onclick="resetEngine()"><span>↺</span> RESET</button>
       <button class="theme-toggle" onclick="toggleTheme()" title="Toggle Light/Dark Theme">🌓</button>
+      <button class="btn" id="custom-btn" onclick="toggleCustomize()" title="Look and performance"><span>⚙</span> CUSTOMIZE</button>
     </div>
   </header>
 
@@ -257,6 +274,21 @@
       <span style="font-size:0.65rem; color:var(--ats-blue); font-weight:800;">⚡ SEND AGENT EVENT:</span>
       <input type="text" id="quick-msg-input" class="trigger-input" placeholder="Type prompt or action..." value="revenue contradiction detected" />
       <button class="trigger-btn" onclick="triggerQuickEvent()">FIRE NOW</button>
+    </div>
+
+    <div id="custom-panel" class="custom-panel" aria-label="Customize">
+      <h4><span>CUSTOMIZE</span><span id="fps-readout" style="color:var(--text-muted);font-weight:700">— fps</span></h4>
+      <div class="sec">LOOK</div>
+      <div class="row"><span>Node size</span><input type="range" id="c-nodeSize" min="0.5" max="2" step="0.1"><span class="v"></span></div>
+      <div class="row"><span>Link opacity</span><input type="range" id="c-linkOpacity" min="0" max="2" step="0.1"><span class="v"></span></div>
+      <div class="row"><span>Labels</span><select id="c-labels"><option value="all">all</option><option value="hubs">hubs only</option><option value="none">none</option></select><span></span></div>
+      <div class="row"><span>Photons</span><input type="range" id="c-photons" min="0" max="2" step="0.25"><span class="v"></span></div>
+      <div class="row"><span>Glow</span><select id="c-glow"><option value="on">on</option><option value="off">off</option></select><span></span></div>
+      <div class="row"><span>Speed</span><input type="range" id="c-speed" min="0.25" max="2" step="0.25"><span class="v"></span></div>
+      <div class="sec">PERFORMANCE</div>
+      <div class="row"><span>Frame cap</span><select id="c-fps"><option value="20">20 fps</option><option value="30">30 fps</option><option value="60">60 fps</option></select><span></span></div>
+      <div class="row" title="auto keeps it smooth: glow, then photons, then labels ease off only while frames drop"><span>Quality</span><select id="c-quality"><option value="auto">auto</option><option value="high">high</option><option value="low">low</option></select><span></span></div>
+      <div class="foot"><span id="quality-note"></span><button class="btn" id="custom-reset" onclick="resetCustomize()">DEFAULTS</button></div>
     </div>
 
     <div id="chat-drawer" class="chat-drawer">
@@ -372,9 +404,18 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
       height = canvas.height = window.innerHeight - 160;
     });
 
+    // OpenAtlas: look + performance settings, saved per browser. Defaults = the original look.
+    const DEFAULTS = { nodeSize: 1, linkOpacity: 1, labels: 'all', photons: 1, glow: 'on', speed: 1,
+                       fps: '30', quality: 'auto', theme: '' };
+    let S = { ...DEFAULTS };
+    try { S = { ...DEFAULTS, ...JSON.parse(localStorage.getItem('oa-brain2d') || '{}') }; } catch (e) {}
+    const saveSettings = () => { try { localStorage.setItem('oa-brain2d', JSON.stringify(S)); } catch (e) {} };
+    if (S.theme) document.body.setAttribute('data-theme', S.theme);
+
     function toggleTheme() {
       const b = document.body;
       b.setAttribute('data-theme', b.getAttribute('data-theme') === 'dark' ? 'light' : 'dark');
+      S.theme = b.getAttribute('data-theme'); saveSettings();
     }
 
     function openConnectModal() { document.getElementById('connect-modal').classList.add('open'); }
@@ -534,9 +575,15 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
     // OpenAtlas: keep the page light. Nothing animates while the tab is hidden, motion is
     // reduced when the OS asks for it, and drawing is capped at ~30 fps.
     const REDUCED_MOTION = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
-    const FRAME_MS = 33;
+    let FRAME_MS = 1000 / (+S.fps || 30) - 1;
     let lastFrame = 0;
     const idle = () => document.hidden || REDUCED_MOTION;
+    // Adaptive quality ("auto"): when the frame rate can't keep up, shed the costliest-looking-
+    // least work first, and put it back once there's headroom. 0 full · 1 no glow · 2 half the
+    // photons · 3 hub labels only. "low" pins level 3, "high" pins level 0.
+    let qLevel = 0;
+    const effLevel = () => (S.quality === 'low' ? 3 : S.quality === 'high' ? 0 : qLevel);
+    const photonCap = () => Math.round(220 * S.photons * (effLevel() >= 2 ? 0.5 : 1));
 
     // OpenAtlas knowledge graph, if injected (see knowledge_graph.js / window.ATLAS_GRAPH).
     const ATLAS = (typeof window !== 'undefined' && window.ATLAS_GRAPH) ? window.ATLAS_GRAPH : null;
@@ -682,13 +729,13 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
     }
 
     function spawnPhoton() {
-      if (edges.length === 0) return;
+      if (edges.length === 0 || photonCap() === 0) return;
       const randEdge = edges[Math.floor(Math.random() * edges.length)];
       photons.push({
         edge: randEdge, progress: 0, speed: Math.random() * 0.035 + 0.02,
         color: randEdge.isCross ? '#06b6d4' : randEdge.color, size: randEdge.isCross ? 3.5 : 2.4
       });
-      if (photons.length > 220) photons.shift();
+      while (photons.length > photonCap()) photons.shift();
     }
 
     const EVENT_ITEMS = [
@@ -703,10 +750,10 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
       { tag: 'COLLIDE', msg: 'cross-cluster citation resolved', tagCls: 'tag-verify', pipe: 5 }
     ];
 
-    let speedMultiplier = 1;
+    let boost = 1, speedMultiplier = S.speed;
     function boostSpeed() {
-      speedMultiplier = speedMultiplier === 1 ? 2 : 1;
-      document.getElementById('speed-btn-txt').textContent = `BOOST: ${speedMultiplier}X`;
+      boost = boost === 1 ? 2 : 1; speedMultiplier = S.speed * boost;
+      document.getElementById('speed-btn-txt').textContent = `BOOST: ${boost}X`;
     }
 
     // Pipeline phase -> tag style: 1 COLLECT, 2 MATCH, 3 CROSS-LINK, 4 VERIFY, 5 SYNTH.
@@ -748,7 +795,7 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
       const realEvents = window.__ATLAS_EVENTS || [];
       let evIdx = 0;
       setInterval(() => {
-        if (document.hidden) return;
+        if (idle()) return;
         if (realEvents.length) {
           const ev = realEvents[evIdx % realEvents.length];
           pushLiveEvent(ev.tag, ev.msg, ev.phase);
@@ -794,12 +841,60 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
 
     window.addEventListener('mouseup', () => { isDragging = false; dragCluster = null; });
 
-    let frameCount = 0;
+    // Photon glow: each colour/size is drawn once, with the original shadowBlur, into a small
+    // sprite, then copied per photon. Same pixels, without a blur pass per photon per frame.
+    const glowCache = {};
+    function glowSprite(color, size) {
+      const key = color + size;
+      if (glowCache[key]) return glowCache[key];
+      const pad = 12, d = Math.ceil((size + pad) * 2), c = document.createElement('canvas');
+      c.width = c.height = d;
+      const g = c.getContext('2d');
+      g.beginPath(); g.arc(d / 2, d / 2, size, 0, Math.PI * 2);
+      g.fillStyle = color; g.shadowColor = color; g.shadowBlur = 8; g.fill();
+      return (glowCache[key] = { c, half: d / 2 });
+    }
+    // Edges never change, so they're grouped once by colour/width/alpha: one stroke per group.
+    let edgeGroups = null;
+    function groupEdges() {
+      const m = new Map();
+      edges.forEach(e => {
+        const k = `${e.color}|${e.isCross ? 0.9 : 0.65}|${e.alpha}`;
+        if (!m.has(k)) m.set(k, { color: e.color, width: e.isCross ? 0.9 : 0.65, alpha: e.alpha, list: [] });
+        m.get(k).list.push(e);
+      });
+      return [...m.values()];
+    }
+
+    let frameCount = 0, fpsFrames = 0, fpsT0 = performance.now(), slowSecs = 0, fastSecs = 0, drawMs = 0;
+    const stats = { fps: 0, level: 0, drawMs: 0, photons: 0, edgeGroups: 0, simulatedFps: 0 };
+    function measure(now) {
+      fpsFrames++;
+      if (now - fpsT0 < 1000) return;
+      const fps = stats.simulatedFps || Math.round(fpsFrames * 1000 / (now - fpsT0));
+      fpsFrames = 0; fpsT0 = now;
+      const target = +S.fps || 30;
+      if (S.quality === 'auto') {
+        slowSecs = fps < target * 0.8 ? slowSecs + 1 : 0;
+        fastSecs = fps >= target * 0.95 ? fastSecs + 1 : 0;
+        if (slowSecs >= 3 && qLevel < 3) { qLevel++; slowSecs = 0; }
+        if (fastSecs >= 5 && qLevel > 0) { qLevel--; fastSecs = 0; }
+      }
+      Object.assign(stats, { fps, level: effLevel(), drawMs: +drawMs.toFixed(2), photons: photons.length });
+      const ro = document.getElementById('fps-readout');
+      if (ro) ro.textContent = `${fps} fps`;
+      const note = document.getElementById('quality-note');
+      if (note) note.textContent = effLevel() ? ['', 'glow off to keep up', 'glow off, fewer photons', 'glow off, fewer photons, hub labels'][effLevel()] : 'full quality';
+    }
+
     function renderLoop(ts) {
-      if (document.hidden || (ts && ts - lastFrame < FRAME_MS)) { requestAnimationFrame(renderLoop); return; }
+      if (document.hidden) return;  // resumed by the visibilitychange listener below
+      if (ts && ts - lastFrame < FRAME_MS) { requestAnimationFrame(renderLoop); return; }
       lastFrame = ts || 0;
+      const t0 = performance.now();
       ctx.clearRect(0, 0, width, height);
       frameCount++;
+      const level = effLevel(), dark = document.body.getAttribute('data-theme') === 'dark';
 
       nodes.forEach(n => {
         n.orbitAngle += n.orbitSpeed * speedMultiplier;
@@ -822,30 +917,35 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
         n.vx *= 0.96; n.vy *= 0.96;
       });
 
-      edges.forEach(e => {
-        ctx.beginPath();
-        ctx.moveTo(e.from.x, e.from.y);
-        ctx.lineTo(e.to.x, e.to.y);
-        ctx.strokeStyle = e.color;
-        ctx.lineWidth = e.isCross ? 0.9 : 0.65;
-        ctx.globalAlpha = e.alpha;
-        ctx.stroke();
-      });
+      if (!edgeGroups) { edgeGroups = groupEdges(); stats.edgeGroups = edgeGroups.length; }
+      if (S.linkOpacity > 0) {
+        edgeGroups.forEach(gr => {
+          ctx.beginPath();
+          gr.list.forEach(e => { ctx.moveTo(e.from.x, e.from.y); ctx.lineTo(e.to.x, e.to.y); });
+          ctx.strokeStyle = gr.color;
+          ctx.lineWidth = gr.width;
+          ctx.globalAlpha = Math.min(1, gr.alpha * S.linkOpacity);
+          ctx.stroke();
+        });
+      }
 
+      ctx.globalAlpha = 0.95;
+      const glow = S.glow === 'on' && level < 1;
       for (let i = photons.length - 1; i >= 0; i--) {
         const p = photons[i];
         p.progress += p.speed * speedMultiplier;
         if (p.progress >= 1) { photons.splice(i, 1); continue; }
         const px = p.edge.from.x + (p.edge.to.x - p.edge.from.x) * p.progress;
         const py = p.edge.from.y + (p.edge.to.y - p.edge.from.y) * p.progress;
-        ctx.beginPath();
-        ctx.arc(px, py, p.size, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = 0.95;
-        ctx.shadowColor = p.color;
-        ctx.shadowBlur = 8;
-        ctx.fill();
-        ctx.shadowBlur = 0;
+        if (glow) {
+          const s = glowSprite(p.color, p.size);
+          ctx.drawImage(s.c, px - s.half, py - s.half);
+        } else {
+          ctx.beginPath();
+          ctx.arc(px, py, p.size, 0, Math.PI * 2);
+          ctx.fillStyle = p.color;
+          ctx.fill();
+        }
       }
 
       for (let i = radarPings.length - 1; i >= 0; i--) {
@@ -862,14 +962,18 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
       }
 
       ctx.globalAlpha = 1.0;
+      const labelMode = level >= 3 && S.labels === 'all' ? 'hubs' : S.labels;
+      const labelColor = dark ? '#e2e8f0' : '#1e293b';
+      let font = '';
       nodes.forEach(n => {
+        const r = n.r * S.nodeSize;
         ctx.beginPath();
-        ctx.arc(n.x, n.y, n.r, 0, Math.PI * 2);
+        ctx.arc(n.x, n.y, r, 0, Math.PI * 2);
         ctx.fillStyle = n.color;
         ctx.fill();
         if (n.isHub) {
           ctx.beginPath();
-          ctx.arc(n.x, n.y, n.r + 3.5, 0, Math.PI * 2);
+          ctx.arc(n.x, n.y, r + 3.5, 0, Math.PI * 2);
           ctx.strokeStyle = n.color;
           ctx.lineWidth = 1.4;
           ctx.globalAlpha = 0.65;
@@ -877,23 +981,24 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
           ctx.globalAlpha = 1.0;
         }
         // OpenAtlas data-mode: label real knowledge nodes (functions/findings).
-        if (n.label) {
+        if (n.label && labelMode !== 'none' && (labelMode === 'all' || n.isHub)) {
           ctx.globalAlpha = 0.92;
-          ctx.fillStyle = document.body.getAttribute('data-theme') === 'dark' ? '#e2e8f0' : '#1e293b';
-          ctx.font = (n.isHub ? '700 ' : '400 ') + '10px ui-monospace, Menlo, monospace';
+          ctx.fillStyle = labelColor;
+          const f = (n.isHub ? '700 ' : '400 ') + '10px ui-monospace, Menlo, monospace';
+          if (f !== font) { ctx.font = f; font = f; }
           if (!n.isHub && n.parentNode) {
             // Findings: label beside the dot, on the side facing away from the parent run,
             // so a fan of findings reads outward instead of stacking on top of each other.
             const right = n.x >= n.parentNode.x;
             ctx.textAlign = right ? 'left' : 'right';
-            ctx.fillText(n.label.substring(0, 34), n.x + (right ? n.r + 4 : -n.r - 4), n.y + 3);
+            ctx.fillText(n.label.substring(0, 34), n.x + (right ? r + 4 : -r - 4), n.y + 3);
           } else if (n.kind === 'target' || n.kind === 'report') {
             // Centre nodes label below, so they never collide with ring labels (drawn above).
             ctx.textAlign = 'center';
-            ctx.fillText(n.label.substring(0, 40), n.x, n.y + n.r + 14);
+            ctx.fillText(n.label.substring(0, 40), n.x, n.y + r + 14);
           } else {
             ctx.textAlign = 'center';
-            ctx.fillText(n.label.substring(0, 40), n.x, n.y - n.r - 5);
+            ctx.fillText(n.label.substring(0, 40), n.x, n.y - r - 5);
           }
           ctx.globalAlpha = 1.0;
         }
@@ -902,8 +1007,40 @@ emit_step("agent_501", "LINK", "Supplier dependency bridge created")</div>
       if (frameCount % 15 === 0) {
         document.getElementById('stat-photons').textContent = photons.length;
       }
+      drawMs = drawMs * 0.9 + (performance.now() - t0) * 0.1;
+      measure(performance.now());
       requestAnimationFrame(renderLoop);
     }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) { lastFrame = 0; fpsT0 = performance.now(); fpsFrames = 0; requestAnimationFrame(renderLoop); } });
+
+    // ---- Customize panel ----
+    function toggleCustomize() { document.getElementById('custom-panel').classList.toggle('open'); }
+    function syncControls() {
+      Object.keys(DEFAULTS).forEach(k => {
+        const el = document.getElementById('c-' + k); if (!el) return;
+        el.value = k === 'fps' ? String(S[k]) : S[k];
+        const v = el.parentElement.querySelector('.v'); if (v) v.textContent = (+S[k]).toFixed(2).replace(/\.?0+$/, '') + (k === 'speed' ? 'x' : '');
+      });
+    }
+    function applySetting(k, v) {
+      S[k] = (el => el && el.type === 'range' ? +v : v)(document.getElementById('c-' + k));
+      if (k === 'fps') FRAME_MS = 1000 / (+S.fps || 30) - 1;
+      if (k === 'speed') speedMultiplier = S.speed * boost;
+      if (k === 'quality') { qLevel = 0; slowSecs = fastSecs = 0; }
+      if (k === 'photons') while (photons.length > photonCap()) photons.shift();
+      saveSettings(); syncControls();
+    }
+    function resetCustomize() {
+      const theme = S.theme; S = { ...DEFAULTS, theme }; saveSettings();
+      FRAME_MS = 1000 / 30 - 1; speedMultiplier = boost; qLevel = 0; syncControls();
+    }
+    document.querySelectorAll('[id^="c-"]').forEach(el => {
+      el.addEventListener(el.tagName === 'SELECT' ? 'change' : 'input', () => applySetting(el.id.slice(2), el.value));
+    });
+    syncControls();
+    window.ATLAS_VIZ = { settings: () => ({ ...S }), stats: () => ({ ...stats, level: effLevel() }), set: applySetting,
+                         simulateFps: (f) => { stats.simulatedFps = f; } };
+
     renderLoop();
   </script>
 </body>

@@ -160,15 +160,13 @@ The sections:
     sources that failed, or investigate a new identifier the case confirmed.
 - **Cases.** History, a Markdown report and a graph view (the ATSMATRIX visualizer).
 - **Brain.** One progress bar with start and pause, plus Ask, which answers with citations.
-  - **3D brain ↗** opens your knowledge base as a 3D space you can fly through.
-    - Every article is a neuron, clustered around its division.
-    - **Click** a neuron to fly to it and inspect it (division, tier, when it was learned, licence, snippet, connections). From there: read the full text, ask E.V about it, find similar articles, isolate its neighbourhood, trace a path to another neuron, or pin it.
-    - **Search** with `/`. A **growth timeline** replays the order things were learned.
-  - The **Customize** panel changes:
-    - the look: presets (Synapse, Nebula, Blueprint, Mono), colour by division / tier / links / age, size, link opacity / width / curvature, synapse firing, glow, background and labels;
-    - the physics and quality: repulsion, link distance, freeze, auto-rotate, max neurons, and quality (auto keeps 60 fps).
-  - Your settings are saved.
-  - **Matrix view ↗** is the ATSMATRIX visualizer of the same brain.
+  - **Brain graph ↗** is a map of what E.V has learned: every field of study is a hub, with
+    its newest articles around it, and an article filed under two fields links them. It is her
+    knowledge base, not her mood or her memory of your chats. Reload it to watch it grow.
+    - **⚙ Customize** (top right) changes the look (node size, link opacity, labels, photons,
+      glow, speed) and the performance (frame-rate cap, quality). Your settings are saved.
+    - Quality "auto" keeps it smooth on older graphics cards: if the frame rate drops, it first
+      drops the glow, then thins the photons, then hides labels, and puts them back when it can.
 - **Skills.** E.V's skills, the project skill cards and the doctor results.
 - **Settings.** E.V's name for you, her standing mission, voice speed, personality dials, memory and routines.
 - **System.** Hardware, profile, Ollama/GPU status and the data path.
@@ -273,6 +271,9 @@ openatlas kb library resume --background    # same, but keeps going when you clo
 openatlas kb library serve                  # Kiwix reader at http://127.0.0.1:8602/kiwix/
 ```
 
+- **Two books download at once.** Pause, resume or cancel any one of them at any time (the
+  buttons on each row in the Library tab, or `pause 1` / `resume 1` above): it stops at once,
+  and its slot goes to the next book in line. **Pause all** / **Resume all** act on every book.
 - **Downloads resume** after a restart, a dropped connection or a closed terminal, from the `.part` file.
   - Run `openatlas kb library resume`, run the same `get` again, or just open the app: the Library tab carries on by itself.
   - Progress shows the size done, the speed and an ETA.
@@ -324,14 +325,6 @@ python -m openatlas.utils.forge doctor
 
 ## If `openatlas doctor` complains
 
-- **Graphics for the 3D brain: … nouveau …** means Fedora's open NVIDIA driver is running your
-  card at its slowest clock, which is common on older cards like the GTX 770. The 3D brain
-  will be choppy. Raise the clock until the next reboot, then reload the page:
-  `sudo cat /sys/kernel/debug/dri/0/pstate`, then `sudo sh -c 'echo 0f > /sys/kernel/debug/dri/0/pstate'`
-  (use the highest level the first command lists). In Firefox, if `about:support` shows
-  Compositing: "WebRender (Software)", set `gfx.webrender.all` to true in `about:config` and
-  restart Firefox. The 3D brain shows the same advice, and its "auto" detail setting eases off
-  sharpness and glow while the GPU can't keep up.
 - **Installation: not installed …** means the code was updated (`git pull`) but its packages
   weren't. Run the command it prints, which uses your checkout's own folder.
 - **Installation: pip install -e . will fail … links outside the project** (pip says
@@ -385,7 +378,6 @@ Where the integrated projects live:
 | OpenJarvis (Apache-2.0) | `openatlas/core/registry.py` - the tool registry every engine uses |
 | ATLAS (AGPL-3.0) | `openatlas/reasoning/loop.py` - plan → execute → check → repair: the **Auto-plan** button / `openatlas plan`, and the **Check** row after each case |
 | OpenJarvis (Apache-2.0) | Visual reference only for the GUI's look (layout, zinc/cyan palette). No code was copied. |
-| three.js, 3d-force-graph (MIT) | `openatlas/web/static/vendor/` - the 3D brain (see `LICENSES.txt`, rebuilt by `tools/build_brain3d_vendor.sh`) |
 | Chakra Petch, IBM Plex Mono (SIL OFL) | `openatlas/web/static/fonts/` |
 | faster-whisper (MIT), MeloTTS (MIT) | E.V's hearing and her Australian voice (optional installs) |
 

@@ -2,7 +2,8 @@ const { chromium } = require("playwright");
 const out = process.argv[2];
 const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; } else console.log("PASS", m); };
 (async () => {
-  const b = await chromium.launch({ executablePath: process.env.CHROME || undefined });
+  const b = await chromium.launch({ executablePath: process.env.CHROME || undefined,
+    args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required"] });
   const p = await b.newPage({ viewport: { width: 1360, height: 900 } });
   const errs = []; p.on("pageerror", (e) => errs.push(e.message)); p.on("console", (m) => m.type() === "error" && errs.push(m.text()));
   await p.goto("http://127.0.0.1:8611/"); await p.waitForSelector("#welcome");
@@ -84,69 +85,52 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   const g = await viz.evaluate(() => window.ATLAS_GRAPH && { n: window.ATLAS_GRAPH.nodes.length, src: window.ATLAS_GRAPH.meta.source });
   ok(g && g.src === "OpenAtlas brain" && g.n >= 15, "Brain graph opens the visualizer with the brain: " + JSON.stringify(g));
   await viz.screenshot({ path: out + "/6-brain-graph.png" }); await viz.close();
-  // 3D brain: neurons load, a neuron can be inspected, customizations persist
-  const [b3] = await Promise.all([p.context().waitForEvent("page"), p.click("#brain-3d")]);
-  await b3.waitForFunction(() => window.BRAIN3D && window.BRAIN3D.data, null, { timeout: 30000 });
-  const n3 = await b3.evaluate(() => window.BRAIN3D.data.nodes.filter((n) => n.kind === "neuron").length);
-  ok(n3 >= 1000, "3D brain loaded " + n3 + " neurons");
-  // drawn in batches (neurons, links, pulses), not one object each: a handful of draw calls
-  await b3.waitForFunction(() => window.BRAIN3D.stats().calls > 0 && window.BRAIN3D.stats().pulses > 0, null, { timeout: 30000 });
-  const st = await b3.evaluate(() => window.BRAIN3D.stats());
-  ok(st.calls < 80 && st.neurons === n3, `batched rendering: ${st.calls} draw calls for ${st.neurons} neurons, ${st.pulses} synapse pulses firing`);
-  // pointing at a neuron (batched, so found by our own raycast) shows its name and clicking inspects it;
-  // take the controls first (as a user does) so the start-up auto-fit stops moving the camera
-  await b3.dispatchEvent("#graph", "wheel"); await b3.waitForTimeout(1500);
-  const spot = await b3.evaluate(() => {
-    const G = window.BRAIN3D.graph, ns = window.BRAIN3D.data.nodes; ns.forEach((n) => { n.fx = n.x; n.fy = n.y; n.fz = n.z; });
-    const r = G.renderer().domElement.getBoundingClientRect();
-    for (const n of ns.filter((m) => m.kind === "neuron")) {
-      const s = G.graph2ScreenCoords(n.x, n.y, n.z), x = r.left + s.x, y = r.top + s.y;
-      if (x < 330 || x > r.width - 330 || y < 90 || y > r.height - 90) continue;  // clear of the side panels
-      const id = window.BRAIN3D.pick(x, y); if (id) return { x, y, label: window.BRAIN3D.data.nodes.find((m) => m.id === id).label };
-    }
-    return null;
-  });
-  ok(!!spot, "a neuron can be found under the pointer");
-  if (spot) {
-    await b3.mouse.move(spot.x, spot.y); await b3.waitForSelector("#tip:not(.hidden)");
-    ok((await b3.textContent("#tip")).includes(spot.label), "hovering a neuron shows its name: " + spot.label);
-    await b3.mouse.click(spot.x, spot.y); await b3.waitForFunction((l) => document.querySelector("#insp-title").textContent === l, spot.label, { timeout: 10000 });
-    ok(true, "clicking a neuron opens it in the inspector");
-  }
-  await b3.evaluate(() => window.BRAIN3D.select(window.BRAIN3D.data.nodes.find((n) => n.kind === "neuron" && n.degree > 2).id));
-  await b3.waitForSelector("#insp:not(.hidden)");
-  ok((await b3.textContent("#insp-title")).length > 2 && (await b3.$$("#insp-nbrs button")).length >= 1, "clicking a neuron opens the inspector with its connections");
-  // the graphics line is visible, the notice picks the right cause, and a slow GPU sheds cost
-  // step by step: sharpness first, then bloom at half resolution, bloom off last
-  ok((await b3.textContent("#gpu")).startsWith("GPU: "), "GPU line shown: " + await b3.textContent("#gpu"));
-  const kinds = await b3.evaluate(() => ["NVE4", "Mesa NVE4 (nouveau)", "llvmpipe (LLVM 19.1.7, 256 bits)", "NVIDIA GeForce GTX 770/PCIe/SSE2"].map(window.BRAIN3D.gpuIssue));
-  ok(JSON.stringify(kinds) === JSON.stringify(["nouveau", "nouveau", "software", ""]), "renderer strings classified: " + JSON.stringify(kinds));
-  await b3.evaluate(() => window.BRAIN3D.simulateFps(60)); await b3.waitForFunction(() => !window.BRAIN3D.stats().level, null, { timeout: 60000 });
-  const full = await b3.evaluate(() => window.BRAIN3D.stats());
-  await b3.evaluate(() => window.BRAIN3D.simulateFps(8));
-  await b3.waitForFunction(() => window.BRAIN3D.stats().level === 1, null, { timeout: 30000 });
-  const l1 = await b3.evaluate(() => window.BRAIN3D.stats());
-  ok(l1.bloom === full.bloom && l1.ratio < full.ratio, `slow GPU step 1: pixel ratio ${full.ratio} -> ${l1.ratio}, bloom untouched`);
-  await b3.waitForFunction(() => window.BRAIN3D.stats().level === 3, null, { timeout: 30000 });
-  const l3 = await b3.evaluate(() => window.BRAIN3D.stats());
-  ok(!full.bloom || (l3.bloom && l3.bloomWidth > 0 && l3.bloomWidth < l1.bloomWidth), `slow GPU step 3: bloom kept at lower resolution (${l1.bloomWidth}px -> ${l3.bloomWidth}px)`);
-  await b3.waitForFunction(() => window.BRAIN3D.stats().level === 4, null, { timeout: 60000 });
-  const l4 = await b3.evaluate(() => window.BRAIN3D.stats());
-  ok(l4.ratio < full.ratio && !l4.bloom, `slow GPU last step: pixel ratio ${full.ratio} -> ${l4.ratio}, bloom off`);
-  await b3.evaluate(() => window.BRAIN3D.simulateFps(60)); await b3.waitForFunction(() => window.BRAIN3D.stats().level === 0, null, { timeout: 90000 });
-  const back = await b3.evaluate(() => window.BRAIN3D.stats());
-  ok(back.ratio === full.ratio && back.bloom === full.bloom && back.bloomWidth === full.bloomWidth, "full look restored when the GPU keeps up");
-  await b3.evaluate(() => window.BRAIN3D.simulateFps(0));
-  await b3.click("#presets button:has-text('Nebula')"); await b3.reload();
-  await b3.waitForFunction(() => window.BRAIN3D && window.BRAIN3D.data, null, { timeout: 30000 });
-  ok((await b3.evaluate(() => window.BRAIN3D.settings().preset)) === "Nebula", "customization persists across reloads");
-  await b3.waitForTimeout(2500); await b3.screenshot({ path: out + "/6b-brain3d.png" }); await b3.close();
+  // Brain graph (2D): the Customize panel applies and remembers settings; a slow GPU eases off
+  const [bg] = await Promise.all([p.context().waitForEvent("page"), p.click("#brain-graph")]);
+  await bg.waitForFunction(() => window.ATLAS_VIZ && window.ATLAS_VIZ.stats().fps > 0, null, { timeout: 30000 });
+  await bg.click("#custom-btn"); await bg.selectOption("#c-labels", "hubs"); await bg.selectOption("#c-fps", "60");
+  await bg.reload(); await bg.waitForFunction(() => window.ATLAS_VIZ, null, { timeout: 30000 });
+  const vs = await bg.evaluate(() => window.ATLAS_VIZ.settings());
+  ok(vs.labels === "hubs" && vs.fps === "60", "brain graph settings persist: " + JSON.stringify(vs));
+  await bg.evaluate(() => window.ATLAS_VIZ.simulateFps(6));
+  await bg.waitForFunction(() => window.ATLAS_VIZ.stats().level === 3, null, { timeout: 30000 });
+  ok(true, "brain graph eases off (glow, photons, labels) when frames drop");
+  await bg.evaluate(() => { window.ATLAS_VIZ.simulateFps(0); });
+  await bg.click("#custom-btn"); await bg.click("#custom-reset");
+  ok((await bg.evaluate(() => window.ATLAS_VIZ.settings().labels)) === "all", "brain graph settings reset to defaults");
+  await bg.screenshot({ path: out + "/6b-brain-graph-custom.png" }); await bg.close();
+  ok((await p.$("#brain-3d")) === null, "no 3D brain button any more");
   await p.emulateMedia({ colorScheme: "light" }); await p.click("#theme"); await p.waitForTimeout(200);
   await p.screenshot({ path: out + "/5-light.png" });
   const idle = await p.evaluate(async () => { let frames = 0; const t0 = performance.now();
     await new Promise((r) => { const tick = () => { frames++; performance.now() - t0 < 2000 ? requestAnimationFrame(tick) : r(); }; requestAnimationFrame(tick); });
     return { anims: document.getAnimations().length, frames }; });
   ok(idle.anims === 0, "no running CSS animations when idle: " + JSON.stringify(idle));
+  // Subtitles: what E.V says aloud is printed on screen (muted monitor); the test plays the
+  // voice server's part through a stand-in socket and a fake microphone
+  const vctx = await b.newContext({ viewport: { width: 1360, height: 900 }, permissions: ["microphone"] });
+  const vp = await vctx.newPage(); vp.on("pageerror", (e) => errs.push(e.message));
+  await vp.addInitScript(() => {
+    const Real = window.WebSocket;
+    window.WebSocket = function (url) {
+      if (!String(url).includes("/ws/ev/voice")) return new Real(url);
+      const fake = { readyState: 1, binaryType: "arraybuffer", send() {}, close() {} };
+      window.__voiceWS = fake; return fake;
+    };
+    window.__srv = (ev) => window.__voiceWS.onmessage({ data: JSON.stringify(ev) });
+    window.__pcm = (sec) => window.__voiceWS.onmessage({ data: new Int16Array(Math.round(24000 * sec)).buffer });
+  });
+  await vp.goto("http://127.0.0.1:8611/"); await vp.waitForSelector("#welcome");
+  await vp.click("#mic"); await vp.waitForFunction(() => window.__voiceWS && window.__voiceWS.onmessage, null, { timeout: 15000 });
+  await vp.evaluate(() => { __srv({ type: "ready", stt: true, tts: "server" }); __srv({ type: "audio_start", text: "The capital of Australia is Canberra.", rate: 24000 }); __pcm(1.2); __srv({ type: "audio_end" }); });
+  await vp.waitForFunction(() => !document.querySelector("#subtitles").classList.contains("hidden"), null, { timeout: 5000 });
+  ok((await vp.textContent("#subtitles")) === "The capital of Australia is Canberra.", "subtitles show what E.V says aloud");
+  await vp.screenshot({ path: out + "/0c-subtitles.png" });
+  await vp.evaluate(() => { __srv({ type: "audio_start", text: "It was a compromise between Sydney and Melbourne.", rate: 24000 }); __pcm(3); __srv({ type: "audio_end" }); });
+  await vp.waitForFunction(() => document.querySelector("#subtitles").textContent.startsWith("It was"), null, { timeout: 5000 });
+  await vp.evaluate(() => __srv({ type: "audio_stop" }));
+  ok((await vp.textContent("#subtitles")).endsWith("(stopped)"), "talking over her marks where she stopped");
+  await vctx.close();
   // Brain: answers cite only on-topic articles and say why they matched
   await p.click("[data-view='brain']"); await p.waitForTimeout(300);
   await p.fill("#ask-q", "WWII"); await p.click("#ask-go");

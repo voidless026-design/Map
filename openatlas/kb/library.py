@@ -17,6 +17,7 @@ OpenAtlas User-Agent (no cookies, no auth). Tests install ``TRANSPORT`` (an http
 
 from __future__ import annotations
 
+import contextvars
 import hashlib
 import html
 import json
@@ -102,6 +103,14 @@ def _set(row_id: int, **fields: Any) -> None:
     cols = ", ".join(f"{k}=?" for k in fields)
     with store.connect() as con:
         con.execute(f"UPDATE library SET {cols} WHERE id=?", [*fields.values(), row_id])
+
+
+def _claim(row_id: int, have: int) -> bool:
+    """Mark the book as downloading - only if nobody paused or cancelled it meanwhile (atomic)."""
+    with store.connect() as con:
+        cur = con.execute("UPDATE library SET status='downloading', bytes_done=?, note='', updated_at=? "
+                          "WHERE id=? AND status IN ('queued', 'downloading')", (have, store.now(), row_id))
+        return cur.rowcount == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -452,7 +461,8 @@ def _download(row_id: int, stop: Optional[threading.Event] = None) -> str:
     if sha:
         _set(row_id, sha256=sha)
     h = _hash_file(part) if have else hashlib.sha256()  # resume: re-hash what we already have
-    _set(row_id, status="downloading", bytes_done=have, note="")
+    if (stop and stop.is_set()) or not _claim(row_id, have):  # paused/cancelled before it began
+        return _halt(row_id, part, (get(row_id) or {}).get("status") or "paused")
     attempt, url_i = 0, 0
     while True:
         try:
@@ -475,6 +485,9 @@ def _download(row_id: int, stop: Optional[threading.Event] = None) -> str:
                         f.write(block)
                         h.update(block)
                         have += len(block)
+                        if stop and stop.is_set():  # this book was paused/cancelled: stop right away
+                            _set(row_id, bytes_done=have)
+                            return _halt(row_id, part, (get(row_id) or {}).get("status") or "paused")
                         now = time.monotonic()
                         if now - last >= 2:
                             speed = (have - since) / max(now - t0, 1e-6)
@@ -506,7 +519,7 @@ def _download(row_id: int, stop: Optional[threading.Event] = None) -> str:
 
 
 def _halt(row_id: int, part: Path, status: str) -> str:
-    if status == "cancelled":
+    if status == "cancelled":  # the thread that wrote the .part removes it (no race with the writer)
         part.unlink(missing_ok=True)
         _set(row_id, bytes_done=0, speed=0, note="cancelled")
         return "cancelled"
@@ -688,72 +701,180 @@ def _retire(old_id: int) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# the worker: one download at a time, then feed the brain
+# the workers: up to MAX_PARALLEL downloads at once, each pausable on its own, and one
+# thread feeding verified books to the brain alongside them
 # --------------------------------------------------------------------------- #
-_thread: Optional[threading.Thread] = None
-_stop = threading.Event()
+MAX_PARALLEL = 2
+_lock = threading.RLock()
+_downloads: Dict[int, Tuple[threading.Thread, threading.Event]] = {}
+_busy: set = set()  # books another Atlas process is downloading (skipped until you resume them)
+_ingest_thread: Optional[threading.Thread] = None
+_stop = threading.Event()  # stops the ingest worker (downloads have their own events)
+
+
+def _spawn(target: Any, *args: Any, name: str) -> threading.Thread:
+    # run in a copy of the caller's context, so store.use_path (a ContextVar) follows the thread
+    ctx = contextvars.copy_context()
+    t = threading.Thread(target=ctx.run, args=(target, *args), name=name, daemon=True)
+    t.start()
+    return t
+
+
+def active() -> List[int]:
+    """Books being downloaded right now by this process."""
+    with _lock:
+        return [i for i, (t, _) in _downloads.items() if t.is_alive()]
+
+
+def _download_worker(row_id: int, ev: threading.Event) -> None:
+    try:
+        if download(row_id, ev) == "busy":
+            _busy.add(row_id)
+            _set(row_id, note="another Atlas window is downloading this book")
+    except Exception as exc:  # e.g. disk full mid-write: report it, keep the library going
+        log.warning("download of book %s failed: %s", row_id, exc)
+        _set(row_id, status="paused", note=f"stopped: {type(exc).__name__} - resume to retry")
+    finally:
+        with _lock:
+            if row_id in _downloads and _downloads[row_id][1] is ev:
+                del _downloads[row_id]
+        if not _stop.is_set():  # the slot goes to the next queued book (not when everything stops)
+            schedule()
+
+
+def _ingest_worker() -> None:
+    while not _stop.is_set():
+        if store.get_meta("paused", False):
+            return
+        ready = [r for r in rows() if r["status"] in ("ready", "ingesting")
+                 and r["cursor"] < (r["entries"] or 1) and libzim_available()]
+        if not ready:
+            return
+        try:
+            status = ingest(ready[0]["id"], _stop)
+        except Exception as exc:  # one bad book must not stop the library
+            log.warning("ingest of %s failed: %s", ready[0]["filename"], exc)
+            _set(ready[0]["id"], status="failed", note=f"ingest error: {type(exc).__name__}")
+            continue
+        if status == "ready" and not _stop.is_set():
+            return  # paused / out of disk: the next start resumes from the cursor
+
+
+def schedule() -> List[int]:
+    """Start the oldest queued books while fewer than MAX_PARALLEL are downloading, and the brain
+    feeder when a verified book is waiting. Returns the books started now."""
+    if store.get_meta("library_paused", False):
+        return []
+    global _ingest_thread
+    _stop.clear()  # an explicit (re)start lifts an earlier shutdown / stopped foreground run
+    started: List[int] = []
+    with _lock:
+        for i, (t, _) in list(_downloads.items()):
+            if not t.is_alive():
+                del _downloads[i]
+        waiting = [r for r in rows() if r["status"] in ("queued", "downloading")
+                   and r["id"] not in _downloads and r["id"] not in _busy]
+        for r in waiting:
+            if len(_downloads) >= MAX_PARALLEL:
+                if r["status"] == "queued" and not r["note"].startswith("waiting"):
+                    _set(r["id"], note=f"waiting for a free slot ({MAX_PARALLEL} downloads at a time)")
+                continue
+            ev = threading.Event()
+            _downloads[r["id"]] = (_spawn(_download_worker, r["id"], ev, name=f"kiwix-dl-{r['id']}"), ev)
+            started.append(r["id"])
+        feeding = _ingest_thread is not None and _ingest_thread.is_alive()
+        if not feeding and not store.get_meta("paused", False) and libzim_available() and any(
+                r["status"] in ("ready", "ingesting") and r["cursor"] < (r["entries"] or 1) for r in rows()):
+            _ingest_thread = _spawn(_ingest_worker, name="kiwix-ingest")
+    return started
 
 
 def work(stop: Optional[threading.Event] = None) -> None:
-    """Process the queue until nothing is left (or ``stop``)."""
+    """Download everything queued (MAX_PARALLEL at a time) and feed the brain, in the foreground:
+    returns when nothing is left to do, or when ``stop`` is set (every book then pauses)."""
     stop = stop or threading.Event()
-    while not stop.is_set():
-        if store.get_meta("library_paused", False):
+    schedule()
+    while not stop.wait(0.2):
+        feeding = _ingest_thread is not None and _ingest_thread.is_alive()
+        if not active() and not feeding and not schedule() and not (
+                _ingest_thread is not None and _ingest_thread.is_alive()):
             return
-        queued = [r for r in rows() if r["status"] in ("queued", "downloading")]
-        if queued:
-            try:
-                if download(queued[0]["id"], stop) == "busy":
-                    return  # another Atlas process is downloading it; it will carry on
-            except Exception as exc:  # e.g. disk full mid-write: report, keep the worker alive
-                log.warning("download of %s failed: %s", queued[0]["filename"], exc)
-                _set(queued[0]["id"], status="paused", note=f"stopped: {type(exc).__name__} - resume to retry")
-                return
-            continue
-        ready = [r for r in rows() if r["status"] in ("ready", "ingesting")
-                 and r["cursor"] < (r["entries"] or 1) and libzim_available()]
-        if ready and not store.get_meta("paused", False):
-            try:
-                status = ingest(ready[0]["id"], stop)
-            except Exception as exc:  # one bad book must not stop the library
-                log.warning("ingest of %s failed: %s", ready[0]["filename"], exc)
-                _set(ready[0]["id"], status="failed", note=f"ingest error: {type(exc).__name__}")
-                continue
-            if status == "ready" and not stop.is_set():
-                return  # paused / out of disk: the next start resumes from the cursor
-            continue
-        return
+    with _lock:
+        evs = [ev for _, ev in _downloads.values()]
+    for ev in evs:
+        ev.set()
+    _stop.set()
 
 
 def start_background() -> bool:
-    global _thread
-    if _thread and _thread.is_alive():
-        return False
-    _stop.clear()
-    _thread = threading.Thread(target=work, args=(_stop,), name="kiwix-library", daemon=True)
-    _thread.start()
-    return True
+    """Start (or top up) the workers without waiting. True if anything new started."""
+    before = _ingest_thread
+    started = schedule()
+    return bool(started) or (_ingest_thread is not before)
 
 
 def running() -> bool:
-    return bool(_thread and _thread.is_alive())
+    return bool(active()) or bool(_ingest_thread and _ingest_thread.is_alive())
+
+
+def _signal(row_id: int) -> bool:
+    with _lock:
+        got = _downloads.get(row_id)
+    if got and got[0].is_alive():
+        got[1].set()
+        return True
+    return False
 
 
 def control(row_id: int, action: str) -> Dict[str, Any]:
-    """pause | resume | cancel one book."""
+    """pause | resume | cancel one book, straight away and without touching the others."""
     row = get(row_id)
     if row is None:
         raise KeyError(row_id)
     if action == "pause" and row["status"] in ("queued", "downloading"):
-        _set(row_id, status="paused")
+        _set(row_id, status="paused", speed=0, note="paused")
+        _signal(row_id)
+        schedule()  # its slot goes to the next queued book
     elif action == "resume" and (row["status"] in ("paused", "failed")
-                                 or (row["status"] == "downloading" and not running())):
+                                 or (row["status"] in ("queued", "downloading") and row_id not in active())):
+        store.set_meta("library_paused", False)  # resuming a book also lifts a pause-all
+        _busy.discard(row_id)
         requeue(row_id)  # 'downloading' with no worker = left over from a closed terminal / crash
-        start_background()
+        if row_id not in schedule() and row_id not in active():
+            _set(row_id, note=f"waiting for a free slot ({MAX_PARALLEL} downloads at a time)")
     elif action == "cancel" and row["status"] in _ACTIVE + ("failed",):
-        _set(row_id, status="cancelled")
-        Path(row["path"] + ".part").unlink(missing_ok=True)
+        _set(row_id, status="cancelled", speed=0)
+        if not _signal(row_id):  # no thread writing it: remove the .part here
+            Path(row["path"] + ".part").unlink(missing_ok=True)
+            _set(row_id, bytes_done=0, note="cancelled")
+        schedule()
     return get(row_id) or {}
+
+
+def shutdown(timeout: float = 5.0) -> None:
+    """Stop every worker thread of this process (their books stay resumable) and wait for them."""
+    with _lock:
+        items = list(_downloads.values())
+    for _, ev in items:
+        ev.set()
+    _stop.set()
+    for th, _ in items:
+        th.join(timeout)
+    if _ingest_thread is not None:
+        _ingest_thread.join(timeout)
+    with _lock:
+        _downloads.clear()
+    _busy.clear()
+
+
+def pause_all() -> List[int]:
+    """Pause every download (they keep their .part files); nothing new starts until resumed."""
+    store.set_meta("library_paused", True)
+    ids = [r["id"] for r in rows() if r["status"] in ("queued", "downloading")]
+    for i in ids:
+        _set(i, status="paused", speed=0, note="paused")
+        _signal(i)
+    return ids
 
 
 def summary() -> Dict[str, Any]:
@@ -761,9 +882,12 @@ def summary() -> Dict[str, Any]:
     for b in books:
         b["percent"] = round(100 * b["bytes_done"] / b["size"], 1) if b["size"] else 0.0
         b["ingest_percent"] = round(100 * b["cursor"] / b["entries"], 1) if b["entries"] else 0.0
+    now = set(active())
+    for b in books:
+        b["active"] = b["id"] in now
     return {"books": [b for b in books if b["status"] != "cancelled"], "dir": str(library_dir()),
             "free_gb": round(free_gb(), 1), "libzim": libzim_available(), "worker": running(),
-            "paused": bool(store.get_meta("library_paused", False))}
+            "paused": bool(store.get_meta("library_paused", False)), "max_parallel": MAX_PARALLEL}
 
 
 def dumps(obj: Any) -> str:  # CLI helper

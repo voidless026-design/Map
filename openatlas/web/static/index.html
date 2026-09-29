@@ -68,6 +68,7 @@
           </div>
         </div>
         <div class="composer-wrap">
+          <div class="subtitles hidden" id="subtitles" role="status" aria-live="polite"></div>
           <div class="voicebar hidden" id="voicebar">
             <span class="orb sm live" id="voice-orb"></span><span id="voice-state">listening…</span>
             <span class="grow"></span><span class="mono dim" id="voice-timing"></span></div>
@@ -135,10 +136,8 @@
             <div class="row">
               <button class="btn primary" id="brain-start">Grow the brain</button>
               <button class="btn" id="brain-pause">Pause</button>
-              <a class="btn" id="brain-3d" href="/viz/brain3d" target="_blank" rel="noopener"
-                 title="Explore every neuron of the brain in 3D">3D brain ↗</a>
-              <a class="btn ghost" id="brain-graph" href="/viz/brain" target="_blank" rel="noopener"
-                 title="The ATSMATRIX view of the brain - reload it to watch it grow">Matrix view ↗</a>
+              <a class="btn" id="brain-graph" href="/viz/brain" target="_blank" rel="noopener"
+                 title="A map of what E.V has learned, by field - reload it to watch it grow">Brain graph ↗</a>
             </div>
           </div>
           <div class="progress" style="margin-top:18px"><i id="brain-bar"></i></div>
@@ -164,7 +163,9 @@
               <div class="label">Kiwix library · offline encyclopedias for the brain</div>
               <div id="lib-line" class="big-line">—</div>
             </div>
-            <div class="row"><button class="btn" id="lib-read">Read books ↗</button></div>
+            <div class="row"><button class="btn" id="lib-pause-all" hidden>Pause all</button>
+              <button class="btn" id="lib-resume-all" hidden>Resume all</button>
+              <button class="btn" id="lib-read">Read books ↗</button></div>
           </div>
           <div class="muted mono small" id="lib-hint" style="margin-top:10px"></div>
         </div>
@@ -207,6 +208,7 @@
             <label class="field">Standing mission (she keeps it in view)<input id="set-mission" maxlength="200" placeholder="e.g. keep my digital footprint small"></label>
             <div class="label" style="margin-top:18px">Voice</div>
             <label class="field">Speaking speed <input type="range" id="set-speed" min="0.7" max="1.4" step="0.05"><span class="mono small" id="set-speed-v"></span></label>
+            <label class="field">Subtitles <input type="checkbox" id="set-subs"><span class="mono small">show on screen what E.V says aloud</span></label>
             <div class="muted small" id="voice-status"></div>
           </div>
           <div class="panel pad">
