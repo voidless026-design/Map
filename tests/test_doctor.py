@@ -279,3 +279,21 @@ def test_pages_and_scripts_are_revalidated_so_updates_show():
             r = c.get(path)
             assert r.status_code == 200 and r.headers.get("cache-control") == "no-cache", path
         assert c.get("/api/brain/gpu").json()["issue"] in ("", "nouveau")
+
+
+def test_active_venv_inside_the_package_gets_rebuild_steps(tmp_path, monkeypatch):
+    """The user's Fedora: the virtualenv in use lived in openatlas/.venv - moving it alone breaks the shell."""
+    import sys
+
+    pkg = tmp_path / "openatlas"
+    (pkg / ".venv" / "bin").mkdir(parents=True)
+    (pkg / "__init__.py").write_text("")
+    (pkg / ".venv" / "bin" / "python3").symlink_to(sys.executable)
+    monkeypatch.setattr(secret_lint, "default_target", lambda: pkg)
+    monkeypatch.setattr(sys, "prefix", str(pkg / ".venv"))
+    status, detail = doctor.check_installation()
+    assert status == "fail" and "you are using" in detail and "deactivate" in detail
+    assert "python3 -m venv .venv" in detail and f"mv '{pkg / '.venv'}' ~/openatlas-old-copy/" in detail
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "elsewhere"))
+    status, detail = doctor.check_installation()
+    assert status == "fail" and "you are using" not in detail and "mv " in detail
