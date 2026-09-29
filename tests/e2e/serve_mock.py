@@ -84,7 +84,7 @@ def kiwix(req: httpx.Request) -> httpx.Response:
 
 
 def synthetic_brain(n: int) -> None:
-    """Seed topics from the real taxonomy (tagged like the ingester does), for the 3D brain."""
+    """Seed topics from the real taxonomy (tagged like the ingester does), for the brain graph."""
     import random
 
     from openatlas.kb import store, taxonomy
@@ -117,6 +117,6 @@ if __name__ == "__main__":
     net_client.TRANSPORT = httpx.MockTransport(handler)
     library.TRANSPORT = httpx.MockTransport(kiwix)
     evaluate.load_fixture_corpus()  # a small brain with look-alike articles
-    synthetic_brain(1500)  # ...plus real taxonomy seeds, so the 3D brain has something to show
+    synthetic_brain(1500)  # ...plus real taxonomy seeds, so the brain graph has something to show
     robots._fetch_text = lambda *a, **k: None
     sys.exit(serve(port=8611, open_browser=False))

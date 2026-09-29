@@ -126,7 +126,7 @@ python -m pytest -q
    - **Claim checker:** it must pass a supported claim and flag a planted wrong number as unsupported.
    - **Document reader:** it must quote the right passage from Word and Markdown fixtures, and refuse a file outside the allowed folders.
    - **Voice pipeline:** it must detect the end of speech, speak the first sentence early, and answer through the worker protocol within the latency budget.
-   - **3D brain builder:** every link must resolve and the neuron cap must hold.
+   - **Brain graph builder:** every edge must resolve, articles must appear under their division, and an article in two divisions must link them.
    - **Persona:** all nine traits and the guardrails must be in E.V's prompt, and her mood must settle back to baseline.
    - **Model picker:** it must choose an installed model instead of asking Ollama for one it doesn't have, which is what caused the "HTTP 404".
    `doctor --live` also probes each public source once from your
@@ -156,8 +156,6 @@ success on a failing check.
 | Approval gate + risk simulation | `openatlas/ev/tools.py` | Network, write and command tools wait for your OK, with a worst-case read-out. Unethical requests are refused. |
 | Document reader | `openatlas/ev/skills/documents.py` | Page-cited passages from your own files, limited to folders you allow. |
 | Voice pipeline | `openatlas/ev/voice.py`, `openatlas/ev/tts_worker.py` | Local hearing and the Australian voice, with the latency measured every turn. |
-| 3D brain builder | `openatlas/utils/knowledge_graph.py` (`build_brain3d`) + `/viz/brain3d` | Every neuron can be inspected, so you can see what the brain knows and how it connects. |
-| Graphics check | `openatlas/runtime/resources.py` (`brain3d_advice`) + doctor "Graphics for the 3D brain" | Reads the real display driver from /sys and gives the exact fix when a slow driver (nouveau) is holding the 3D brain back. |
 | Knowledge-graph visualizer | `openatlas/utils/knowledge_graph.py` (ATSMATRIX) | Shows a case's evidence or the brain's growth as a graph, so cross-links and gaps are visible instead of re-checked by hand. |
 | Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 

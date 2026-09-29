@@ -422,7 +422,10 @@ let libTimer = null;
 async function loadLibrary() {
   clearTimeout(libTimer); libTimer = null;
   let s; try { s = await api("/api/library"); } catch (e) { $("#lib-line").textContent = e.message; return; }
-  $("#lib-line").textContent = `${s.books.length} book${s.books.length === 1 ? "" : "s"} · ${s.free_gb} GB free · ${s.dir}`;
+  const nDl = s.books.filter((b) => b.active).length;
+  $("#lib-line").textContent = `${s.books.length} book${s.books.length === 1 ? "" : "s"} · ${nDl} of ${s.max_parallel} downloading · ${s.free_gb} GB free · ${s.dir}`;
+  const moving = s.books.some((b) => ["queued", "downloading"].includes(b.status)), resumable = s.books.some((b) => b.status === "paused");
+  $("#lib-pause-all").hidden = !moving; $("#lib-resume-all").hidden = !resumable;
   const hints = [];
   if (!s.libzim) hints.push("To feed books into the brain: pip install libzim");
   if (s.kiwix.hint) hints.push(s.kiwix.hint);
@@ -433,7 +436,8 @@ async function loadLibrary() {
   for (const b of s.books) {
     const dl = ["queued", "downloading", "paused"].includes(b.status);
     const pct = dl ? b.percent : b.ingest_percent;
-    const label = dl ? `download ${b.percent}%` + (b.speed ? ` · ${(b.speed / 1e6).toFixed(1)} MB/s` : "")
+    const label = dl ? `download ${b.percent}%` + (b.speed && b.active ? ` · ${(b.speed / 1e6).toFixed(1)} MB/s` : "")
+      + (b.status === "queued" && !b.active ? " · waiting for a free slot" : "")
       : b.status === "ingested" ? "in the brain" : `brain ${b.ingest_percent}%`;
     const ctl = (a, t) => h("button", { class: "btn ghost", onclick: async () => { await api(`/api/library/${b.id}/${a}`, { method: "POST" }); loadLibrary(); } }, t);
     box.append(h("div", { class: "lib-row" },
@@ -448,6 +452,8 @@ async function loadLibrary() {
   if (state.view === "library" && s.books.some((b) => ["queued", "downloading", "ingesting"].includes(b.status)))
     libTimer = setTimeout(() => { if (!document.hidden) loadLibrary(); }, 3000);
 }
+for (const [id, a] of [["#lib-pause-all", "pause"], ["#lib-resume-all", "resume"]])
+  $(id).addEventListener("click", async () => { await api(`/api/library/all/${a}`, { method: "POST" }); loadLibrary(); });
 async function searchCatalog() {
   const out = $("#lib-catalog"); out.replaceChildren(h("div", { class: "empty" }, h("span", { class: "spin" }), " searching the Kiwix catalog…"));
   let books;

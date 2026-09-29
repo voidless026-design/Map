@@ -368,6 +368,8 @@
       : [h("div", { class: "muted small" }, "No routines. Ask E.V: “every morning at 7, grow the brain and check search quality”.")]));
   }
   ["#set-name", "#set-mission"].forEach((id) => $(id).addEventListener("input", (e) => saveSettings({ [id === "#set-name" ? "user_name" : "mission"]: e.target.value })));
+  $("#set-subs").checked = subsOn();
+  $("#set-subs").addEventListener("change", (e) => { try { localStorage.setItem("oa-subtitles", e.target.checked ? "on" : "off"); } catch {} if (!e.target.checked) caption(null); });
   $("#set-speed").addEventListener("input", (e) => { $("#set-speed-v").textContent = (+e.target.value).toFixed(2) + "×"; saveSettings({ voice_speed: +e.target.value }); });
   $("#fact-form").addEventListener("submit", async (e) => { e.preventDefault(); const v = $("#fact-new").value.trim(); if (!v) return;
     await api("/api/ev/memory", { method: "POST", body: JSON.stringify({ text: v }) }); $("#fact-new").value = ""; loadSettings(); });
@@ -386,9 +388,31 @@
   function voiceUI(on, text) {
     $("#voicebar").classList.toggle("hidden", !on); $("#mic").classList.toggle("on", on);
     if (text) $("#voice-state").textContent = text;
+    if (!on) caption(null);
+  }
+  // Subtitles: exactly what E.V says aloud (the spoken form of each sentence), shown while she
+  // says it - for a muted monitor. Held briefly after she stops so it can be read.
+  function subsOn() { try { return localStorage.getItem("oa-subtitles") !== "off"; } catch { return true; } }
+  var capTimers = [];  // var: voiceUI() may clear captions before this line has run
+  function caption(text, opts = {}) {
+    const el = $("#subtitles");
+    if (text === null) { (capTimers || []).forEach(clearTimeout); capTimers = []; el.classList.add("hidden"); el.textContent = ""; return; }
+    if (!subsOn()) return;
+    const show = () => { el.textContent = text; el.classList.toggle("stopped", !!opts.stopped); el.classList.remove("hidden"); };
+    opts.delayMs > 20 ? (capTimers = capTimers || []).push(setTimeout(show, opts.delayMs)) : show();
+  }
+  function captionDone(holdMs = 1800) {
+    (capTimers = capTimers || []).push(setTimeout(() => {
+      const v = S.voice; if (v && (v.playing.length || (window.speechSynthesis && speechSynthesis.speaking))) return;
+      $("#subtitles").classList.add("hidden");
+    }, holdMs));
   }
   function stopPlayback(v) {
-    for (const s of v.playing) { try { s.stop(); } catch {} } v.playing = []; v.next = 0;
+    if (v.playing.length || (window.speechSynthesis && speechSynthesis.speaking)) {  // cut off mid-sentence
+      capTimers.forEach(clearTimeout); capTimers = [];
+      const el = $("#subtitles"); if (!el.classList.contains("hidden")) { caption(el.textContent + " …(stopped)", { stopped: true }); captionDone(1500); }
+    }
+    for (const s of v.playing) { try { s.stop(); } catch {} } v.playing = []; v.next = 0; v.capNext = null;
     if (window.speechSynthesis) speechSynthesis.cancel();
     $("#voice-orb").classList.remove("speaking");
   }
@@ -428,8 +452,8 @@
       }
       if (ev.type === "vad") { voiceUI(true, ev.speech ? "hearing you…" : "thinking…"); return; }
       if (ev.type === "transcript") { if (ev.text) { userMsg(ev.text); v.current = null; } else voiceUI(true, "listening…"); return; }
-      if (ev.type === "audio_start") { v.rate = ev.rate; $("#voice-orb").classList.add("speaking"); voiceUI(true, "speaking…"); return; }
-      if (ev.type === "audio_end") return;
+      if (ev.type === "audio_start") { v.rate = ev.rate; v.capNext = ev.text; $("#voice-orb").classList.add("speaking"); voiceUI(true, "speaking…"); return; }
+      if (ev.type === "audio_end") { if (v.capNext) { caption(v.capNext); v.capNext = null; } return; }
       if (ev.type === "audio_stop") { stopPlayback(v); voiceUI(true, "listening…"); return; }
       if (ev.type === "say") { speakBrowser(v, ev.text); return; }
       if (ev.type === "timings") {
@@ -449,15 +473,23 @@
     const ab = v.ctx.createBuffer(1, f32.length, v.rate); ab.copyToChannel(f32, 0);
     const s = v.ctx.createBufferSource(); s.buffer = ab; s.connect(v.ctx.destination);
     const at = Math.max(v.ctx.currentTime + 0.02, v.next); s.start(at); v.next = at + ab.duration;
-    v.playing.push(s); s.onended = () => { v.playing = v.playing.filter((x) => x !== s); if (!v.playing.length) { $("#voice-orb").classList.remove("speaking"); voiceUI(true, "listening…"); } };
+    if (v.capNext) { caption(v.capNext, { delayMs: (at - v.ctx.currentTime) * 1000 }); v.capNext = null; }  // when this sentence starts playing
+    v.playing.push(s); s.onended = () => { v.playing = v.playing.filter((x) => x !== s); if (!v.playing.length) { $("#voice-orb").classList.remove("speaking"); voiceUI(true, "listening…"); captionDone(); } };
   }
   function speakBrowser(v, text) {
-    if (!window.speechSynthesis) return;
+    if (!window.speechSynthesis) {  // no voice at all in this browser: still show what she says
+      caption(text); captionDone(Math.max(2500, text.split(/\s+/).length * 400)); return;
+    }
     const u = new SpeechSynthesisUtterance(text); const voice = pickVoice(); if (voice) u.voice = voice; u.lang = voice ? voice.lang : "en-AU";
     u.rate = (S.state && S.state.persona.voice_speed) || 1; u.pitch = 1.05;
-    u.onstart = () => { $("#voice-orb").classList.add("speaking"); voiceUI(true, "speaking…"); };
-    u.onend = () => { if (!speechSynthesis.speaking) { $("#voice-orb").classList.remove("speaking"); voiceUI(true, "listening…"); } };
+    const readMs = Math.max(2500, text.split(/\s+/).length * 400);
+    let started = false;
+    const unspoken = () => { if (!started) { started = true; caption(text); captionDone(readMs); } };  // no voice installed: still show it
+    u.onstart = () => { started = true; caption(text); $("#voice-orb").classList.add("speaking"); voiceUI(true, "speaking…"); };
+    u.onend = () => { if (!speechSynthesis.speaking) { $("#voice-orb").classList.remove("speaking"); voiceUI(true, "listening…"); captionDone(); } };
+    u.onerror = unspoken;
     speechSynthesis.speak(u);
+    setTimeout(() => { if (!speechSynthesis.speaking) unspoken(); }, 1500);
   }
   function stopVoice() {
     const v = S.voice; if (!v) return; S.voice = null; stopPlayback(v);
@@ -490,7 +522,7 @@
   };
   window.addEventListener("load", () => {
     refresh(); loadConversations(); loadSystemPanel(); $("#chat-input").focus();
-    if (location.hash.startsWith("#ask=")) {  // "Ask E.V about this" from the 3D brain
+    if (location.hash.startsWith("#ask=")) {  // a link that opens the chat with a question ready
       const q = decodeURIComponent(location.hash.slice(5)); history.replaceState(null, "", "/"); send(q);
     }
     setInterval(() => { if (!document.hidden) { refresh(); loadSystemPanel(); } }, 15000);

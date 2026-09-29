@@ -141,25 +141,6 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
         graph = await asyncio.to_thread(knowledge_graph.build_graph_from_brain)
         return HTMLResponse(knowledge_graph.inline_html(graph))
 
-    @app.get("/viz/brain3d", response_class=HTMLResponse)
-    async def viz_brain3d() -> FileResponse:
-        """The brain as a customizable 3D space of neurons (data from /api/brain/graph3d)."""
-        return FileResponse(STATIC / "brain3d.html")
-
-    @app.get("/api/brain/gpu")
-    async def brain_gpu() -> Dict[str, Any]:
-        """This PC's display driver, read from /sys (the browser often hides it): the 3D brain
-        shows the fix when it's the slow open 'nouveau' driver on an NVIDIA card."""
-        from openatlas.runtime import resources
-
-        return await asyncio.to_thread(resources.brain3d_advice)
-
-    @app.get("/api/brain/graph3d")
-    async def brain_graph3d(limit: int = 3000) -> Dict[str, Any]:
-        from openatlas.utils import knowledge_graph
-
-        return await asyncio.to_thread(knowledge_graph.build_brain3d, limit)
-
     @app.get("/api/brain/article")
     async def brain_article(key: str) -> Dict[str, Any]:
         from openatlas.kb import store
@@ -325,10 +306,23 @@ def create_app(token: Optional[str] = None, loopback: bool = True) -> FastAPI:
 
         data = await asyncio.to_thread(library.summary)
         # a download left behind by a closed terminal / restart carries on when the app is open
-        if not data["paused"] and not library.running() and any(
-                b["status"] in ("queued", "downloading") for b in data["books"]):
-            library.start_background()
+        if not data["paused"] and any(b["status"] in ("queued", "downloading") and not b["active"]
+                                      for b in data["books"]):
+            library.start_background()  # fills free slots only; running downloads are untouched
         return {**data, "kiwix": kiwix.status()}
+
+    @app.post("/api/library/all/{action}")
+    async def library_all(action: str) -> Dict[str, Any]:
+        """Pause or resume every download at once."""
+        from openatlas.kb import library
+
+        if action == "pause":
+            return {"paused": await asyncio.to_thread(library.pause_all)}
+        if action == "resume":
+            ids = await asyncio.to_thread(library.resume_all)
+            library.start_background()
+            return {"resumed": ids}
+        raise HTTPException(404, "use pause or resume")
 
     @app.get("/api/library/catalog")
     async def library_catalog(q: str = "", lang: str = "eng") -> List[Dict[str, Any]]:
