@@ -157,6 +157,7 @@ success on a failing check.
 | Document reader | `openatlas/ev/skills/documents.py` | Page-cited passages from your own files, limited to folders you allow. |
 | Voice pipeline | `openatlas/ev/voice.py`, `openatlas/ev/tts_worker.py` | Local hearing and the Australian voice, with the latency measured every turn. |
 | 3D brain builder | `openatlas/utils/knowledge_graph.py` (`build_brain3d`) + `/viz/brain3d` | Every neuron can be inspected, so you can see what the brain knows and how it connects. |
+| Graphics check | `openatlas/runtime/resources.py` (`brain3d_advice`) + doctor "Graphics for the 3D brain" | Reads the real display driver from /sys and gives the exact fix when a slow driver (nouveau) is holding the 3D brain back. |
 | Knowledge-graph visualizer | `openatlas/utils/knowledge_graph.py` (ATSMATRIX) | Shows a case's evidence or the brain's growth as a graph, so cross-links and gaps are visible instead of re-checked by hand. |
 | Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 

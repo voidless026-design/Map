@@ -596,6 +596,20 @@ def check_brain3d() -> Tuple[str, str]:
         _fail(f"3D builder: {len(neurons)} neurons, meta {g['meta']}")
 
 
+def check_graphics(root: str = "/sys/class/drm") -> Tuple[str, str]:
+    """The display driver the 3D brain will run on (Linux sysfs, no root). nouveau on an NVIDIA
+    card - especially Kepler, like the GTX 770 - stays at its slowest clock: say how to fix it."""
+    from openatlas.runtime import resources
+
+    a = resources.brain3d_advice(root)
+    if not a["gpus"]:
+        return _pass("no display GPU visible here - not checked")
+    names = ", ".join(f"{g['card']}: {g['vendor']:04x}:{g['device']:04x} ({g['driver'] or 'no driver'})" for g in a["gpus"])
+    if a["issue"] == "nouveau":
+        return "warn", f"{a['message']} Run: " + " ; ".join(a["steps"][:2]) + f". Then: {a['steps'][2]}. [{names}]"
+    return _pass(f"3D brain runs on {names}")
+
+
 def check_ev_persona() -> Tuple[str, str]:
     """E.V's prompt carries all nine traits + guardrails; her simulated mood self-regulates."""
     from openatlas.ev import persona, state
@@ -632,6 +646,7 @@ CHECKS: List[Check] = [
     ("E.V voice pipeline", check_ev_voice),
     ("E.V persona", check_ev_persona),
     ("3D brain builder", check_brain3d),
+    ("Graphics for the 3D brain", check_graphics),
 ]
 
 

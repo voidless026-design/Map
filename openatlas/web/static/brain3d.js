@@ -167,7 +167,7 @@
     if (!G) return;
     G.backgroundColor(C.bg).nodeOpacity(C.nodeOpacity).linkOpacity(C.linkOpacity).linkCurvature(C.curvature)
       .nodeVal(nodeVal).nodeThreeObject(hubLabel);
-    bloomPass.enabled = !!C.bloom; bloomPass.strength = C.bloomStrength;
+    bloomPass.enabled = !!C.bloom && LADDER[level][0] > 0; bloomPass.strength = C.bloomStrength;  // a slow GPU's "bloom off" step holds
     styleLayers();
     const ctl = G.controls(); ctl.autoRotate = !!C.rotate; ctl.autoRotateSpeed = 0.6; ctl.enableDamping = true; ctl.dampingFactor = 0.08;
     G.d3Force("charge").strength(C.charge);
@@ -328,28 +328,44 @@
   }
 
   // ------------------------------------------------------------ fps + adaptive quality
+  // "auto" detail on a slow GPU, only while it's slow (< 30 fps), so a capable card always gets
+  // the full look: 0 full · 1 pixel ratio x0.85 · 2 x0.7 (as before) · 3 bloom at half resolution
+  // (glow a little softer) · 4 bloom off (the old last step). Climbs back when fps > 55.
+  const LADDER = [[1, 1], [1, 0.85], [1, 0.7], [0.5, 0.7], [0, 0.7]];
+  let level = 0, bloomScale = 1;
+  function setLevel(lv) {
+    level = Math.max(0, Math.min(LADDER.length - 1, lv)); stats.level = level;
+    const [bs, rf] = LADDER[level], base = Math.min(devicePixelRatio || 1, 2), comp = G.postProcessingComposer();
+    G.renderer().setPixelRatio(base * rf); comp.setPixelRatio(base * rf);
+    bloomScale = bs || 1; bloomPass.enabled = !!C.bloom && bs > 0;
+    comp.setSize(innerWidth, innerHeight);  // re-sizes the bloom buffers through the scaled setSize
+  }
   function fpsLoop() {
-    let frames = 0, t0 = performance.now(), slow = 0, fast = 0, ratio = Math.min(devicePixelRatio || 1, 2);
+    let frames = 0, t0 = performance.now(), slow = 0, fast = 0;
     const info = G.renderer().info; info.autoReset = false; let calls = 0; stats.gpu = gpuName();
-    const setRatio = (r) => { G.renderer().setPixelRatio(r); G.postProcessingComposer().setPixelRatio(r); };
+    const bloomSize = bloomPass.setSize.bind(bloomPass);  // bloom samples by UV, so any internal size works
+    bloomPass.setSize = (w, h) => bloomSize(Math.max(1, Math.round(w * bloomScale)), Math.max(1, Math.round(h * bloomScale)));
     const tick = () => {
       frames++; const now = performance.now();
       stepPulses(); calls = Math.max(calls, info.render.calls); info.reset();
       if (now - t0 >= 1000) {
         const fps = Math.round((frames * 1000) / (now - t0)); frames = 0; t0 = now;
-        Object.assign(stats, { fps, calls }); calls = 0;
-        $("#fps").textContent = `${fps} fps`;
-        $("#fps").title = `${stats.gpu || "unknown graphics"} · ${stats.calls} draw calls per frame`;
+        Object.assign(stats, { fps: stats._fps || fps, calls }); calls = 0;
+        $("#fps").textContent = `${stats.fps} fps`;
+        $("#gpu").textContent = `GPU: ${stats.gpu || "unknown"} · ${stats.calls} draws${level ? ` · saving level ${level}` : ""}`;
+        $("#fps").title = $("#gpu").title = `${stats.gpu || "unknown graphics"} · ${stats.calls} draw calls per frame`;
         if (C.quality === "auto" && !document.hidden) {
-          slow = fps < 45 ? slow + 1 : 0; fast = fps > 58 ? fast + 1 : 0;
-          if (slow >= 2 && ratio > 0.75) { ratio = Math.max(0.75, ratio - 0.25); setRatio(ratio); slow = 0; }
-          if (slow >= 2 && bloomPass.enabled && ratio <= 0.75) { bloomPass.enabled = false; slow = 0; }
-          if (fast >= 4 && ratio < Math.min(devicePixelRatio || 1, 2)) { ratio += 0.25; setRatio(ratio); fast = 0; }
+          slow = stats.fps < 30 ? slow + 1 : 0; fast = stats.fps > 55 ? fast + 1 : 0;
+          if (slow >= 2) { setLevel(level + 1); slow = 0; }
+          if (fast >= 4 && level) { setLevel(level - 1); fast = 0; }
         }
       }
       requestAnimationFrame(tick);
     };
-    if (/llvmpipe|softpipe|swiftshader|software/i.test(stats.gpu)) softwareNotice(stats.gpu);
+    // the server reads the real driver from /sys (browsers often hide it); one notice covers both causes
+    const software = gpuIssue(stats.gpu) === "software";
+    api("/api/brain/gpu").then((a) => (a.issue === "nouveau" ? driverNotice(a, software) : software && softwareNotice(stats.gpu)))
+      .catch(() => software && softwareNotice(stats.gpu));
     if (C.quality === "high") G.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     if (C.quality === "low") G.renderer().setPixelRatio(0.75);
     requestAnimationFrame(tick);
@@ -360,12 +376,27 @@
     try { const gl = G.renderer().getContext(), x = gl.getExtension("WEBGL_debug_renderer_info");
       return String(gl.getParameter(x ? x.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || ""); } catch { return ""; }
   }
+  function gpuIssue(renderer) {  // what the WebGL renderer string says about speed
+    if (/llvmpipe|softpipe|swiftshader|software/i.test(renderer || "")) return "software";
+    if (/nouveau|\bNV[0-9A-F]{2}\b/i.test(renderer || "")) return "nouveau";
+    return "";
+  }
+  function driverNotice(a, software) {  // the open nouveau driver keeps an NVIDIA card at its slowest clock
+    try { if (localStorage.getItem("oa-brain3d-driver-ok") && !software) return; } catch {}
+    const steps = software ? [...a.steps, "Firefox also draws this without the graphics card: Settings → General → Performance → untick “Use recommended performance settings”, tick “Use hardware acceleration when available”, restart"] : a.steps;
+    const box = h("div", { class: "glass hint3d", id: "driver-notice", style: "position:fixed;left:50%;bottom:74px;transform:translateX(-50%);max-width:620px;padding:10px 14px;z-index:5" },
+      h("b", { style: "color:#fbbf24" }, "Your graphics card is running slowly"), " - " + a.message,
+      h("pre", { style: "white-space:pre-wrap;margin:8px 0;font:11px var(--mono);color:#c3ccd5" }, steps.join("\n")),
+      h("button", { class: "btn ghost", style: "color:#e8edf2", onclick: () => { try { localStorage.setItem("oa-brain3d-driver-ok", "1"); } catch {} box.remove(); } }, "Don't show again"),
+      h("button", { class: "btn ghost", style: "margin-left:6px;color:#e8edf2", onclick: () => box.remove() }, "OK"));
+    document.body.append(box);
+  }
   function softwareNotice(gpu) {  // the browser draws without the graphics card: say how to fix it
     const box = h("div", { class: "glass hint3d", style: "position:fixed;left:50%;bottom:74px;transform:translateX(-50%);max-width:560px;padding:10px 14px;z-index:5" },
       h("b", { style: "color:#fbbf24" }, "Your browser is drawing this without the graphics card"), ` (${gpu}), so it will be slow. `,
       "Firefox: Settings → General → Performance → untick “Use recommended performance settings”, tick “Use hardware acceleration when available”, restart. ",
       "Chrome: Settings → System → “Use graphics acceleration when available”. ",
-      h("button", { class: "btn ghost", style: "margin-left:6px", onclick: () => box.remove() }, "OK"));
+      h("button", { class: "btn ghost", style: "margin-left:6px;color:#e8edf2", onclick: () => box.remove() }, "OK"));
     document.body.append(box);
   }
 
@@ -525,5 +556,7 @@
   bindControls();
   load().catch((e) => $("#loading").replaceChildren(h("div", {}, "Couldn't load the brain: " + e.message)));
   window.BRAIN3D = { get graph() { return G; }, get data() { return data; }, select: (id) => select(byId.get(id), true), settings: () => ({ ...C }),
-    stats: () => ({ ...stats, pulses: pulses.length, neurons: NM ? NM.count : 0 }), pick: (x, y) => { const n = pick({ clientX: x, clientY: y }); return n ? n.id : null; } };
+    stats: () => ({ ...stats, pulses: pulses.length, neurons: NM ? NM.count : 0, bloom: bloomPass ? bloomPass.enabled : false,
+      bloomWidth: bloomPass ? bloomPass.renderTargetBright.width : 0, ratio: G ? G.renderer().getPixelRatio() : 0 }),
+    gpuIssue, simulateFps: (f) => { stats._fps = f; }, pick: (x, y) => { const n = pick({ clientX: x, clientY: y }); return n ? n.id : null; } };
 })();
