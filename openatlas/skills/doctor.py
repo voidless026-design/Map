@@ -436,6 +436,15 @@ def check_installation() -> Tuple[str, str]:
         stray = {s.name for s in stray_copies(pkg)}
         why = "an old copy" if all(o.name in stray for o in owners) else "not part of OpenAtlas"
         fix = f"{move_out_line(owners)}   ({why} inside the package folder)"
+        import sys
+
+        active = Path(sys.prefix).resolve()
+        home = next((o for o in owners if o.resolve() == active or o.resolve() in active.parents), None)
+        if home is not None:  # it's the virtualenv running right now: moving it alone would break the shell
+            return _fail(f"pip install -e . will fail: the Python environment you are using ({home}) sits inside "
+                         f"the package folder and links to {links[0].resolve()}. Make a new one next to the code: "
+                         f"deactivate ; {move_out_line([home])} ; cd '{root}' && python3 -m venv .venv && "
+                         "source .venv/bin/activate && pip install -e '.[voice]'")
         return _fail(f"pip install -e . will fail: {links[0]} links outside the project "
                      f"(to {links[0].resolve()}). Fix: {fix}, then: cd '{root}' && pip install -e .")
     missing = [n for n in core_dependencies()
