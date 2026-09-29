@@ -40,6 +40,7 @@
   let selected = null, hover = null, highlight = new Set(), hlLinks = new Set(), isolate = 0, pathFrom = null, similar = new Set();
   const hiddenGroups = new Set(); let cutoff = Infinity, times = [];
   let bloomPass = null, fitted = false;
+  let libHover = null, nHover = null;  // hub under the pointer (library) / neuron under it (ours)
   const TIER = ["your field (seed)", "vital article", "depth 1", "depth 2"];
 
   // ------------------------------------------------------------ colour helpers
@@ -87,7 +88,7 @@
     groups = [...new Set(data.nodes.filter((n) => n.kind === "hub").map((n) => n.group))];
     paintPalette();
     $("#stat").textContent = `${data.meta.shown.toLocaleString()} of ${data.meta.articles.toLocaleString()} articles · ${data.meta.hubs} hubs`;
-    if (!G) init(); else G.graphData(data);
+    if (!G) init(); else { G.graphData(data); buildLayers(); }
     $("#loading").classList.toggle("hidden", data.nodes.length > 1);
     if (data.nodes.length <= data.meta.hubs + 1) $("#loading").replaceChildren(h("div", { class: "glass", style: "padding:14px 18px;color:#c3ccd5" },
       "The brain has no articles yet - press “Grow the brain” in Atlas, or download a Kiwix book."));
@@ -124,9 +125,9 @@
       .nodeOpacity(C.nodeOpacity)
       .nodeResolution(C.quality === "low" ? 6 : 12)
       .nodeLabel(() => "")
-      .nodeVisibility(visible)
+      .nodeVisibility(libNode)
       .nodeThreeObject(hubLabel).nodeThreeObjectExtend(true)
-      .linkVisibility(linkVis)
+      .linkVisibility(libLink)
       .linkColor(linkCol)
       .linkOpacity(C.linkOpacity)
       .linkWidth(linkW)
@@ -137,16 +138,24 @@
       .warmupTicks(data.nodes.length > 2000 ? 40 : 80)
       .cooldownTime(9000)
       .d3AlphaDecay(0.028).d3VelocityDecay(0.35)
-      .onEngineStop(() => { if (!fitted) { fitted = true; G.zoomToFit(900, 50); } })
+      .onEngineTick(placeLayers)
+      .onEngineStop(() => { placeLayers(); if (!fitted) { fitted = true; G.zoomToFit(900, 50); } })
       .onNodeClick((n) => select(n, true))
       .onNodeRightClick((n) => togglePin(n))
-      .onBackgroundClick(() => select(null))
-      .onNodeHover((n) => { hover = n; el.style.cursor = n ? "pointer" : ""; showTip(n); });
+      .onBackgroundClick((e) => select(pick(e), true))  // a neuron (batched, so not the library's) or empty space
+      .onBackgroundRightClick((e) => { const n = pick(e); if (n) togglePin(n); })
+      .onNodeHover((n) => { libHover = n; setHover(); });
     G.d3Force("charge").strength(C.charge);
     G.d3Force("link").distance((l) => (l.kind === "core" ? C.distance * 3.2 : l.kind === "hub" ? C.distance * 1.3 : C.distance));
     bloomPass = new window.UnrealBloomPass(new window.THREE.Vector2(innerWidth, innerHeight), C.bloomStrength, 0.55, 0.12);
     G.postProcessingComposer().addPass(bloomPass);
+    buildLayers();
     applyLook();
+    let moved = null;  // neuron hover: one raycast per frame at most
+    el.addEventListener("pointermove", (e) => {
+      if (!moved) requestAnimationFrame(() => { nHover = pick(moved); moved = null; setHover(); });
+      moved = e;
+    });
     addEventListener("resize", () => G.width(innerWidth).height(innerHeight));
     for (const ev of ["pointerdown", "wheel"]) el.addEventListener(ev, () => { fitted = true; }, { passive: true });
     document.addEventListener("visibilitychange", () => (document.hidden ? G.pauseAnimation() : G.resumeAnimation()));
@@ -159,6 +168,7 @@
     G.backgroundColor(C.bg).nodeOpacity(C.nodeOpacity).linkOpacity(C.linkOpacity).linkCurvature(C.curvature)
       .nodeVal(nodeVal).nodeThreeObject(hubLabel);
     bloomPass.enabled = !!C.bloom; bloomPass.strength = C.bloomStrength;
+    styleLayers();
     const ctl = G.controls(); ctl.autoRotate = !!C.rotate; ctl.autoRotateSpeed = 0.6; ctl.enableDamping = true; ctl.dampingFactor = 0.08;
     G.d3Force("charge").strength(C.charge);
     G.d3Force("link").distance((l) => (l.kind === "core" ? C.distance * 3.2 : l.kind === "hub" ? C.distance * 1.3 : C.distance));
@@ -169,9 +179,141 @@
   const linkVis = (l) => visible(l.source.id ? l.source : byId.get(l.source)) && visible(l.target.id ? l.target : byId.get(l.target));
   const linkCol = (l) => (hlLinks.has(l) ? "#e0fbff" : l.kind === "bridge" ? "#fbbf24" : l.kind === "core" ? "#64748b" : "#7dd3fc");
   const linkW = (l) => (hlLinks.has(l) ? Math.max(0.6, C.linkWidth * 2) : C.linkWidth);
-  function refresh() {  // fresh wrappers so the renderer re-applies them
-    if (G) G.nodeColor((n) => nodeColor(n)).nodeVisibility((n) => visible(n)).linkVisibility((l) => linkVis(l))
+  // the library draws hubs, the core and highlighted (or user-widened) links; the batched layers the rest
+  const libNode = (n) => n.kind !== "neuron" && visible(n);
+  const libLink = (l) => (C.linkWidth > 0 || hlLinks.has(l)) && linkVis(l);
+  const batchLink = (l) => !(C.linkWidth > 0 || hlLinks.has(l)) && linkVis(l);
+  function refresh() {  // fresh wrappers so the library re-applies them (it only holds a few objects now)
+    if (!G) return;
+    G.nodeColor((n) => nodeColor(n)).nodeVisibility((n) => libNode(n)).linkVisibility((l) => libLink(l))
       .linkWidth((l) => linkW(l)).linkColor((l) => linkCol(l));
+    placeLayers(); paintLayers();
+  }
+
+  // ------------------------------------------------------------ batched layers (same look, ~5 draw calls)
+  // 3d-force-graph makes one three.js object per node and per link: ~10,000 draw calls a frame
+  // for a 3,000-article brain, all issued from one CPU thread (the GPU sits idle). Neurons,
+  // ordinary links and synapse pulses are drawn here as three batched objects that copy the
+  // library's own geometry, materials and curve maths exactly, so nothing looks different.
+  const REL = 3.2, SEGS = 30, MAX_PULSES = 600;  // nodeRelSize; the library's curveResolution
+  let neurons = [], NM = null, LM = null, PM = null, pulses = [];
+  const T = window.THREE, _m = new T.Matrix4(), _c = new T.Color(), _p = { x: 0, y: 0, z: 0 };
+  const ray = new T.Raycaster(), ndc = new T.Vector2(), hits = [];
+  // zoom-to-fit measures the library's node spheres only: this stand-in reports exactly the
+  // visible neurons' spheres, and the batched objects themselves are left out of that measure
+  const nbox = new T.Box3(), fitProxy = new T.Object3D(), _v = new T.Vector3();
+  fitProxy.geometry = { boundingBox: nbox, computeBoundingBox() {} };
+  const noRay = () => {};  // the library's pointer picking skips our layers (pick() below finds neurons)
+  const end = (x) => (typeof x === "object" ? x : byId.get(x)) || _p;
+  // the library's graph scene (zoom-to-fit measures what is inside it)
+  const graphScene = () => G.scene().children.find((o) => typeof o.getGraphBbox === "function") || G.scene();
+
+  function buildLayers() {
+    for (const o of [NM, LM, PM]) if (o) { o.parent && o.parent.remove(o); o.geometry.dispose(); o.material.dispose(); }
+    neurons = data.nodes.filter((n) => n.kind === "neuron");
+    const res = C.quality === "low" ? 6 : 12;  // the library's nodeResolution
+    NM = new T.InstancedMesh(new T.SphereGeometry(1, res, res),
+      new T.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: C.nodeOpacity }), Math.max(1, neurons.length));
+    NM.count = neurons.length; NM.frustumCulled = false; NM.instanceMatrix.setUsage(T.DynamicDrawUsage);
+    const n = data.links.length * SEGS * 6, g = new T.BufferGeometry();
+    g.setAttribute("position", new T.BufferAttribute(new Float32Array(n), 3).setUsage(T.DynamicDrawUsage));
+    g.setAttribute("color", new T.BufferAttribute(new Float32Array(n), 3));
+    LM = new T.LineSegments(g, new T.LineBasicMaterial({ vertexColors: true }));
+    LM.renderOrder = 10; LM.frustumCulled = false;  // the library draws links last too
+    PM = new T.InstancedMesh(new T.SphereGeometry(0.8, 4, 4),  // emitParticle: width 1.6, resolution 4
+      new T.MeshLambertMaterial({ color: "#ecfeff", transparent: true }), MAX_PULSES);
+    PM.count = 0; PM.frustumCulled = false; PM.instanceMatrix.setUsage(T.DynamicDrawUsage); pulses = [];
+    for (const o of [NM, LM, PM]) { o.__graphObjType = "batch"; o.raycast = noRay; }
+    styleLayers(); placeLayers(); paintLayers();
+  }
+  function styleLayers() {
+    if (!NM) return;
+    const lo = C.linkOpacity;
+    NM.material.opacity = C.nodeOpacity;
+    Object.assign(LM.material, { opacity: lo, transparent: lo < 1, depthWrite: lo >= 1 }); LM.material.needsUpdate = true;
+    PM.material.opacity = lo * 3;
+  }
+  // a point on a link: the library's QuadraticBezierCurve3 (control point = (end-start)*curvature x axis + midpoint)
+  function linkPoint(s, e, t, out) {
+    const sx = s.x || 0, sy = s.y || 0, sz = s.z || 0, ex = e.x || 0, ey = e.y || 0, ez = e.z || 0, k = C.curvature;
+    if (!k || (sx === ex && sy === ey && sz === ez)) { out.x = sx + (ex - sx) * t; out.y = sy + (ey - sy) * t; out.z = sz + (ez - sz) * t; return out; }
+    const vx = (ex - sx) * k, vy = (ey - sy) * k, vz = (ez - sz) * k, zAxis = ex - sx !== 0 || ey - sy !== 0;
+    const cx = (zAxis ? vy : -vz) + (sx + ex) / 2, cy = (zAxis ? -vx : 0) + (sy + ey) / 2, cz = (zAxis ? 0 : vx) + (sz + ez) / 2;
+    const a = (1 - t) * (1 - t), b = 2 * (1 - t) * t, c = t * t;
+    out.x = a * sx + b * cx + c * ex; out.y = a * sy + b * cy + c * ey; out.z = a * sz + b * cz + c * ez; return out;
+  }
+  const _q = { x: 0, y: 0, z: 0 }, _r = { x: 0, y: 0, z: 0 };
+  function placeLayers() {
+    if (!NM) return;
+    // into the library's graph scene once it exists (after its first update), where zoom-to-fit looks
+    const scene = graphScene(); if (NM.parent !== scene) scene.add(NM, LM, PM, fitProxy);
+    nbox.makeEmpty();
+    for (let i = 0; i < neurons.length; i++) {
+      const n = neurons[i], r = visible(n) ? Math.cbrt(Math.max(0, nodeVal(n)) || 1) * REL : 0;
+      const x = n.x || 0, y = n.y || 0, z = n.z || 0;
+      NM.setMatrixAt(i, _m.makeScale(r, r, r).setPosition(x, y, z));
+      if (r) { nbox.expandByPoint(_v.set(x - r, y - r, z - r)); nbox.expandByPoint(_v.set(x + r, y + r, z + r)); }
+    }
+    NM.instanceMatrix.needsUpdate = true; NM.computeBoundingSphere();
+    const pos = LM.geometry.attributes.position.array, links = data.links, curved = !!C.curvature;
+    for (let k = 0, o = 0; k < links.length; k++) {
+      const l = links[k], s = end(l.source), e = end(l.target);
+      if (!batchLink(l)) { for (let j = 0; j < SEGS * 6; j += 3) { pos[o++] = s.x || 0; pos[o++] = s.y || 0; pos[o++] = s.z || 0; } continue; }
+      if (!curved) {  // one straight segment, the rest folded onto the end (drawn as nothing)
+        pos[o++] = s.x || 0; pos[o++] = s.y || 0; pos[o++] = s.z || 0;
+        for (let j = 3; j < SEGS * 6; j += 3) { pos[o++] = e.x || 0; pos[o++] = e.y || 0; pos[o++] = e.z || 0; }
+        continue;
+      }
+      linkPoint(s, e, 0, _q);
+      for (let j = 1; j <= SEGS; j++) {
+        linkPoint(s, e, j / SEGS, _r);
+        pos[o++] = _q.x; pos[o++] = _q.y; pos[o++] = _q.z; pos[o++] = _r.x; pos[o++] = _r.y; pos[o++] = _r.z;
+        _q.x = _r.x; _q.y = _r.y; _q.z = _r.z;
+      }
+    }
+    LM.geometry.attributes.position.needsUpdate = true;
+  }
+  function paintLayers() {
+    if (!NM) return;
+    for (let i = 0; i < neurons.length; i++) NM.setColorAt(i, _c.set(nodeColor(neurons[i])));
+    if (NM.instanceColor) NM.instanceColor.needsUpdate = true;
+    const col = LM.geometry.attributes.color.array, links = data.links;
+    for (let k = 0, o = 0; k < links.length; k++) {
+      _c.set(linkCol(links[k]));
+      for (let j = 0; j < SEGS * 2; j++) { col[o++] = _c.r; col[o++] = _c.g; col[o++] = _c.b; }
+    }
+    LM.geometry.attributes.color.needsUpdate = true;
+  }
+  function pulse(l) { if (PM && pulses.length < MAX_PULSES) pulses.push({ l, t: 0 }); }
+  function stepPulses() {  // the library's single-hop photons: +speed per frame, gone at the end
+    if (!PM || (!pulses.length && !PM.count)) return;
+    let w = 0;
+    for (const p of pulses) { p.t += C.firingSpeed; if (p.t < 1 && p.t >= 0) pulses[w++] = p; }
+    pulses.length = w;
+    for (let i = 0; i < w; i++) {
+      const p = pulses[i]; linkPoint(end(p.l.source), end(p.l.target), p.t, _q);
+      PM.setMatrixAt(i, _m.makeTranslation(_q.x, _q.y, _q.z));
+    }
+    PM.count = w; PM.instanceMatrix.needsUpdate = true;
+  }
+  function pick(ev) {  // the neuron under the pointer (visible ones only)
+    if (!ev || !NM || !neurons.length) return null;
+    const r = G.renderer().domElement.getBoundingClientRect();
+    ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, G.camera());
+    hits.length = 0; T.InstancedMesh.prototype.raycast.call(NM, ray, hits); hits.sort((p, q) => p.distance - q.distance);
+    const hit = hits.find((x) => visible(neurons[x.instanceId]));
+    if (!hit) return null;
+    const n = neurons[hit.instanceId];
+    if (libHover) {  // a hub under the pointer too: the nearer one wins, as the library would
+      const cam = G.camera().position, d = Math.hypot((libHover.x || 0) - cam.x, (libHover.y || 0) - cam.y, (libHover.z || 0) - cam.z);
+      if (d < hit.distance) return null;
+    }
+    return n;
+  }
+  function setHover() {
+    const n = nHover || libHover; hover = n;
+    G.renderer().domElement.parentElement.style.cursor = n ? "pointer" : ""; showTip(n);
   }
 
   // ------------------------------------------------------------ synapse firing (emits pulses, no per-frame cost when off)
@@ -181,30 +323,50 @@
       const links = G.graphData().links; if (!links.length) return;
       const pool = hlLinks.size ? [...hlLinks] : links;
       const n = hlLinks.size ? Math.min(6, pool.length) : Math.min(10, Math.ceil(links.length / 300));
-      for (let i = 0; i < n; i++) { const l = pool[(Math.random() * pool.length) | 0]; if (l && linkVis(l)) G.emitParticle(l); }
+      for (let i = 0; i < n; i++) { const l = pool[(Math.random() * pool.length) | 0]; if (l && linkVis(l)) pulse(l); }
     }, 160);
   }
 
   // ------------------------------------------------------------ fps + adaptive quality
   function fpsLoop() {
     let frames = 0, t0 = performance.now(), slow = 0, fast = 0, ratio = Math.min(devicePixelRatio || 1, 2);
+    const info = G.renderer().info; info.autoReset = false; let calls = 0; stats.gpu = gpuName();
+    const setRatio = (r) => { G.renderer().setPixelRatio(r); G.postProcessingComposer().setPixelRatio(r); };
     const tick = () => {
       frames++; const now = performance.now();
+      stepPulses(); calls = Math.max(calls, info.render.calls); info.reset();
       if (now - t0 >= 1000) {
         const fps = Math.round((frames * 1000) / (now - t0)); frames = 0; t0 = now;
+        Object.assign(stats, { fps, calls }); calls = 0;
         $("#fps").textContent = `${fps} fps`;
+        $("#fps").title = `${stats.gpu || "unknown graphics"} · ${stats.calls} draw calls per frame`;
         if (C.quality === "auto" && !document.hidden) {
           slow = fps < 45 ? slow + 1 : 0; fast = fps > 58 ? fast + 1 : 0;
-          if (slow >= 2 && ratio > 0.75) { ratio = Math.max(0.75, ratio - 0.25); G.renderer().setPixelRatio(ratio); slow = 0; }
+          if (slow >= 2 && ratio > 0.75) { ratio = Math.max(0.75, ratio - 0.25); setRatio(ratio); slow = 0; }
           if (slow >= 2 && bloomPass.enabled && ratio <= 0.75) { bloomPass.enabled = false; slow = 0; }
-          if (fast >= 4 && ratio < Math.min(devicePixelRatio || 1, 2)) { ratio += 0.25; G.renderer().setPixelRatio(ratio); fast = 0; }
+          if (fast >= 4 && ratio < Math.min(devicePixelRatio || 1, 2)) { ratio += 0.25; setRatio(ratio); fast = 0; }
         }
       }
       requestAnimationFrame(tick);
     };
+    if (/llvmpipe|softpipe|swiftshader|software/i.test(stats.gpu)) softwareNotice(stats.gpu);
     if (C.quality === "high") G.renderer().setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     if (C.quality === "low") G.renderer().setPixelRatio(0.75);
     requestAnimationFrame(tick);
+  }
+
+  const stats = { fps: 0, calls: 0, gpu: "" };
+  function gpuName() {
+    try { const gl = G.renderer().getContext(), x = gl.getExtension("WEBGL_debug_renderer_info");
+      return String(gl.getParameter(x ? x.UNMASKED_RENDERER_WEBGL : gl.RENDERER) || ""); } catch { return ""; }
+  }
+  function softwareNotice(gpu) {  // the browser draws without the graphics card: say how to fix it
+    const box = h("div", { class: "glass hint3d", style: "position:fixed;left:50%;bottom:74px;transform:translateX(-50%);max-width:560px;padding:10px 14px;z-index:5" },
+      h("b", { style: "color:#fbbf24" }, "Your browser is drawing this without the graphics card"), ` (${gpu}), so it will be slow. `,
+      "Firefox: Settings → General → Performance → untick “Use recommended performance settings”, tick “Use hardware acceleration when available”, restart. ",
+      "Chrome: Settings → System → “Use graphics acceleration when available”. ",
+      h("button", { class: "btn ghost", style: "margin-left:6px", onclick: () => box.remove() }, "OK"));
+    document.body.append(box);
   }
 
   // ------------------------------------------------------------ selection + inspector
@@ -362,5 +524,6 @@
 
   bindControls();
   load().catch((e) => $("#loading").replaceChildren(h("div", {}, "Couldn't load the brain: " + e.message)));
-  window.BRAIN3D = { get graph() { return G; }, get data() { return data; }, select: (id) => select(byId.get(id), true), settings: () => ({ ...C }) };
+  window.BRAIN3D = { get graph() { return G; }, get data() { return data; }, select: (id) => select(byId.get(id), true), settings: () => ({ ...C }),
+    stats: () => ({ ...stats, pulses: pulses.length, neurons: NM ? NM.count : 0 }), pick: (x, y) => { const n = pick({ clientX: x, clientY: y }); return n ? n.id : null; } };
 })();

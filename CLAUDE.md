@@ -59,6 +59,7 @@ must both pass (CI runs them).
 - `openatlas/web/` - FastAPI + no-build SPA (`openatlas serve`, loopback only).
   - The home page is E.V's chat (`static/ev.js`). `web/ev_routes.py` has the `/api/ev/*` endpoints and the `/ws/ev/voice` WebSocket.
   - `/viz/brain3d` (`static/brain3d.{html,js}`) is the 3D brain, built from `knowledge_graph.build_brain3d`. Its vendored bundle (`static/vendor/`) is rebuilt with `tools/build_brain3d_vendor.sh`; don't hand-edit it.
+    - Neurons, ordinary links and synapse pulses are drawn as three batched objects (about 40 draw calls instead of about 10,000). They copy 3d-force-graph's exact geometry, materials and curve maths, so the look is unchanged. Keep it that way: never go back to one three.js object per node or link, and check any visual change against the old rendering.
 - `openatlas/ev/` - E.V, the local AI companion.
   - `persona.py` holds the nine trait dials and the fixed guardrails. `state.py` is her simulated mood and trust, with self-regulation. `memory.py` handles context continuity.
   - `agent.py` runs the streaming turn: Ollama tool calls, a keyword router when the model can't call tools, and an offline fallback. `tools.py` has the registry, approval gate, ethics screen and risk appraisal.

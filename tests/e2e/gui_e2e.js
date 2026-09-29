@@ -89,6 +89,28 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   await b3.waitForFunction(() => window.BRAIN3D && window.BRAIN3D.data, null, { timeout: 30000 });
   const n3 = await b3.evaluate(() => window.BRAIN3D.data.nodes.filter((n) => n.kind === "neuron").length);
   ok(n3 >= 1000, "3D brain loaded " + n3 + " neurons");
+  // drawn in batches (neurons, links, pulses), not one object each: a handful of draw calls
+  await b3.waitForFunction(() => window.BRAIN3D.stats().calls > 0 && window.BRAIN3D.stats().pulses > 0, null, { timeout: 30000 });
+  const st = await b3.evaluate(() => window.BRAIN3D.stats());
+  ok(st.calls < 80 && st.neurons === n3, `batched rendering: ${st.calls} draw calls for ${st.neurons} neurons, ${st.pulses} synapse pulses firing`);
+  // pointing at a neuron (batched, so found by our own raycast) shows its name and clicking inspects it
+  const spot = await b3.evaluate(() => {
+    const G = window.BRAIN3D.graph, ns = window.BRAIN3D.data.nodes; ns.forEach((n) => { n.fx = n.x; n.fy = n.y; n.fz = n.z; });
+    const r = G.renderer().domElement.getBoundingClientRect();
+    for (const n of ns.filter((m) => m.kind === "neuron")) {
+      const s = G.graph2ScreenCoords(n.x, n.y, n.z), x = r.left + s.x, y = r.top + s.y;
+      if (x < 330 || x > r.width - 330 || y < 90 || y > r.height - 90) continue;  // clear of the side panels
+      const id = window.BRAIN3D.pick(x, y); if (id) return { x, y, label: window.BRAIN3D.data.nodes.find((m) => m.id === id).label };
+    }
+    return null;
+  });
+  ok(!!spot, "a neuron can be found under the pointer");
+  if (spot) {
+    await b3.mouse.move(spot.x, spot.y); await b3.waitForSelector("#tip:not(.hidden)");
+    ok((await b3.textContent("#tip")).includes(spot.label), "hovering a neuron shows its name: " + spot.label);
+    await b3.mouse.click(spot.x, spot.y); await b3.waitForFunction((l) => document.querySelector("#insp-title").textContent === l, spot.label, { timeout: 10000 });
+    ok(true, "clicking a neuron opens it in the inspector");
+  }
   await b3.evaluate(() => window.BRAIN3D.select(window.BRAIN3D.data.nodes.find((n) => n.kind === "neuron" && n.degree > 2).id));
   await b3.waitForSelector("#insp:not(.hidden)");
   ok((await b3.textContent("#insp-title")).length > 2 && (await b3.$$("#insp-nbrs button")).length >= 1, "clicking a neuron opens the inspector with its connections");
