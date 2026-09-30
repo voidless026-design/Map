@@ -554,6 +554,9 @@ def check_ev_voice() -> Tuple[str, str]:
 
     from openatlas.ev import voice
 
+    if not voice.ws_supported():
+        return _fail("E.V can't hear you: the web server has no WebSocket support, so the voice button can't "
+                     f"connect. Run: cd '{Config.files.project_root}' && pip install -e .   then restart openatlas serve")
     ep = voice.Endpointer()
     ep.vad = None
     step = voice.IN_RATE * voice.FRAME_MS // 1000 * 2

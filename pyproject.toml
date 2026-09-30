@@ -24,6 +24,8 @@ httpx = ">=0.27"
 # Web GUI (replaces Streamlit): tiny, no build step, loopback-only by default
 fastapi = ">=0.110"
 uvicorn = ">=0.29"
+# WebSocket support for uvicorn: without it E.V's hands-free voice socket can't connect
+websockets = ">=12"
 # Offline phone-number parsing and RAM/GPU-aware resource limits
 phonenumbers = "*"
 psutil = "*"

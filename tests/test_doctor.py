@@ -264,3 +264,11 @@ def test_active_venv_inside_the_package_gets_rebuild_steps(tmp_path, monkeypatch
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "elsewhere"))
     status, detail = doctor.check_installation()
     assert status == "fail" and "you are using" not in detail and "mv " in detail
+
+
+def test_voice_check_fails_when_the_server_cannot_open_websockets(monkeypatch):
+    from openatlas.ev import voice
+
+    monkeypatch.setattr(voice, "ws_supported", lambda: False)
+    status, detail = doctor.check_ev_voice()
+    assert status == "fail" and "WebSocket" in detail and "pip install -e ." in detail

@@ -11,6 +11,9 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
 
   // E.V chat is home: skills run, cards are interactive, answers are checked
   ok(await p.isVisible("#welcome") && (await p.$$("#suggest button")).length === 4, "E.V welcome with suggestions");
+  const sock = await p.evaluate(() => new Promise((res) => { const ws = new WebSocket(`ws://${location.host}/ws/ev/voice`);
+    ws.onmessage = (e) => { res(JSON.parse(e.data).type); ws.close(); }; ws.onerror = () => res("error"); setTimeout(() => res("timeout"), 8000); }));
+  ok(sock === "ready", "the real voice socket connects (the server has WebSocket support): " + sock);
   await p.fill("#chat-input", "help me plan my week"); await p.keyboard.press("Enter");
   await p.waitForSelector(".plan-step", { timeout: 15000 });
   ok((await p.$$(".plan-step")).length === 5, "Interactive Planning card with 5 steps");

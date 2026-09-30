@@ -163,3 +163,17 @@ def test_sidecar_missing_says_how_to_set_up(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match="openatlas ev voice-setup"):
         voice.SidecarTTS()
     assert "voice-setup" in voice.status()["tts"]["hint"]
+
+
+def test_the_web_server_can_open_the_voice_socket():
+    """uvicorn serves WebSockets only when a WebSocket library is installed; without one the
+    browser's hands-free voice never connects (found by a live test run: the unit tests above use
+    Starlette's in-process client, which doesn't need one)."""
+    from uvicorn.config import Config as ServerConfig
+
+    from openatlas.skills.doctor import core_dependencies
+
+    assert "websockets" in core_dependencies()
+    cfg = ServerConfig(app=lambda scope, receive, send: None, ws="auto")
+    cfg.load()
+    assert cfg.ws_protocol_class is not None, "no WebSocket library for uvicorn - run: pip install -e ."

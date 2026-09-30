@@ -469,6 +469,7 @@
       if (typeof e.data !== "string") { playPcm(v, e.data); return; }
       const ev = JSON.parse(e.data);
       if (ev.type === "ready") {
+        v.ready = true;
         voiceUI(true, ev.stt ? "listening… just talk" : "can't hear yet: " + (ev.hint || "install faster-whisper"));
         v.ws.send(JSON.stringify({ type: "config", speak: true, conv_id: S.conv }));
         v.serverTts = ev.tts === "server"; return;
@@ -488,7 +489,10 @@
       if (v.current) v.current(ev);
       if (ev.type === "done") { v.current = null; voiceUI(true, "listening…"); }
     };
-    v.ws.onclose = () => { if (S.voice === v) stopVoice(); };
+    v.ws.onclose = () => {
+      if (!v.ready) toast("E.V's voice couldn't connect to the server. Run: pip install -e .  in your openatlas folder, then restart openatlas serve");
+      if (S.voice === v) stopVoice();
+    };
   }
   function playPcm(v, buf) {
     const i16 = new Int16Array(buf); const f32 = new Float32Array(i16.length);
