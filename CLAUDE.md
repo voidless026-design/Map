@@ -66,14 +66,42 @@ must both pass (CI runs them).
 - `openatlas/ev/` - E.V, the local AI companion.
   - `persona.py` holds the nine trait dials and the fixed guardrails. `state.py` is her simulated mood and trust, with self-regulation. `memory.py` handles context continuity.
   - `agent.py` runs the streaming turn: Ollama tool calls, a keyword router when the model can't call tools, and an offline fallback. `tools.py` has the registry, approval gate, ethics screen and risk appraisal.
-  - `skills/*` are the eight skills. Only `read` tools auto-run; `network`, `write` and `command` tools always go through `tools.decide`.
+  - `skills/*` are the nine skills. Only `read` tools auto-run; `network`, `write` and `command` tools always go through `tools.decide`.
   - `voice.py` handles endpointing, sentence streaming and barge-in. `ev.js` shows every spoken sentence as a subtitle (from `audio_start` / `say`) while it plays. `tts_worker.py` is MeloTTS EN-AU in its own py3.11 venv (`openatlas ev voice-setup`).
   - New E.V skills are generated with `forge new-skill`, and the doctor verifies their tools.
+  - `skills/engineering.py` (adapted from everything-claude-code) holds `review_code`, `verify_project`, `learn_pattern`, `checkpoint`, `plan_feature` and `eval_answers`.
+    - Review reads only E.V's allowed folders.
+    - Verify runs a fixed command list per project type, never arbitrary shell. Tests swap `engineering.RUNNER`.
+    - A checkpoint stores the last message id in kv `checkpoint:<conv>`; `memory.recent_for_model` sends only newer messages.
 - `openatlas/llm/ollama_client.py` always resolves the model against `/api/tags` (`resolve_model` / `diagnose`). Never hard-code a model name that might not be pulled.
 - `openatlas/cli.py` - `investigate|run|catalog|serve|cases|kb|doctor`; `openatlas/catalog.py`
   gives every action a human title + kebab slug (no underscores in titles).
 - `openatlas/runtime/` - resource profiles, LLM gate, memory guard. Any heavy model load
   goes through `runtime.limits` (cached, gated) - never load per call.
+
+## Working on OpenAtlas with Claude Code
+Adapted from everything-claude-code (MIT); see `.claude/ECC-NOTICE.md`.
+- Agents in `.claude/agents/`:
+  - `planner` and `architect` before multi-file changes;
+  - `tdd-guide` for features and bugs (failing test first);
+  - `code-reviewer` after every change, plus `security-reviewer` when the change touches input, paths, network, subprocesses, the web API or E.V tools;
+  - `build-error-resolver` when a gate is red;
+  - `e2e-runner` for GUI changes;
+  - `refactor-cleaner` and `doc-updater` on request.
+- Commands in `.claude/commands/`, all prefixed `oa-` to avoid clashing with built-ins: `/oa-plan`, `/oa-tdd`, `/oa-verify` (the exact CI gate), `/oa-review`, `/oa-checkpoint`, `/oa-learn`, `/oa-eval`, `/oa-orchestrate`, `/oa-build-fix`, `/oa-e2e`, `/oa-test-coverage`, `/oa-refactor-clean`, `/oa-update-docs`.
+- Rules:
+  - Plan first for multi-file work.
+  - Write the failing test first.
+  - Review before commit.
+  - Not done until every `/oa-verify` gate passes.
+  - Never skip or loosen a test to get green.
+  - Save a lesson (`/oa-learn`) only after the user says yes.
+- `tests/test_claude_dev_files.py` lints these files:
+  - frontmatter present;
+  - a source line;
+  - no npm/TypeScript leftovers;
+  - no paid services;
+  - every documented `openatlas` command passes `--help`.
 
 ## Testing
 `make test` (mocked, offline), `make verify` (self-verifier), `make lint`, `make doctor`,

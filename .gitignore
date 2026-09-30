@@ -30,3 +30,5 @@ poetry.lock
 rust_ext/target/
 *.so
 .claude/skill-drafts/
+.claude/checkpoints.log
+.claude/evals/*.log

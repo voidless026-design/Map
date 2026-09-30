@@ -200,7 +200,30 @@
     if (ev.card === "plan") return planCard(ev.plan);
     if (ev.card === "decision") return decisionCard(ev);
     if (ev.card === "project") return projectCard(ev);
+    if (ev.card === "review") return reviewCard(ev);
+    if (ev.card === "verify") return verifyCard(ev);
+    if (ev.card === "eval") return evalCard(ev);
     return null;
+  }
+  function reviewCard(r) {
+    const c = r.counts || {};
+    const rows = (r.findings || []).map((f) => h("div", { class: "qa-row" }, h("span", { class: "verdict " + (["critical", "high"].includes(f.severity) ? "unsupported" : f.severity === "medium" ? "unverified" : "supported") }, f.severity),
+      h("div", {}, h("b", {}, f.what), " ", h("span", { class: "mono small" }, `${f.file}${f.line ? ":" + f.line : ""}`), h("div", { class: "dim small" }, f.why))));
+    return h("div", { class: "tcard" }, h("div", { class: "th" }, h("span", { class: "tag " + (r.verdict === "block" ? "write" : "read") }, "review"),
+      h("b", {}, r.path.split("/").pop()), h("span", { class: "grow" }), `${c.critical || 0} critical · ${c.high || 0} high · ${c.medium || 0} medium · ${c.low || 0} low · ${r.verdict}`),
+      h("div", { class: "tb" }, ...(rows.length ? rows : [h("div", { class: "muted small" }, "Nothing to flag.")])));
+  }
+  function verifyCard(v) {
+    return h("div", { class: "tcard" }, h("div", { class: "th" }, h("span", { class: "tag " + (v.passed ? "read" : "write") }, "verify"),
+      h("b", {}, v.summary)), h("div", { class: "tb" }, ...(v.gates || []).map((g) => h("div", { class: "qa-row" },
+        h("span", { class: "verdict " + (g.passed ? "supported" : "unsupported") }, g.passed ? "pass" : "fail"),
+        h("div", {}, h("b", {}, g.gate), " ", h("span", { class: "mono small" }, g.command), g.tail ? h("pre", { class: "mono small dim", style: "white-space:pre-wrap;margin:4px 0 0" }, g.tail) : null)))));
+  }
+  function evalCard(e) {
+    return h("div", { class: "tcard" }, h("div", { class: "th" }, h("span", { class: "tag read" }, "eval"), h("b", {}, e.question),
+      h("span", { class: "grow" }), `${e.passed}/${e.k} right · pass@k ${e.pass_at_k ? "✓" : "✗"} · all-k ${e.pass_all_k ? "✓" : "✗"}`),
+      h("div", { class: "tb" }, ...(e.runs || []).map((r, i) => h("div", { class: "qa-row" }, h("span", { class: "verdict " + (r.passed ? "supported" : "unsupported") }, `run ${i + 1}`),
+        h("div", { class: "small" }, r.answer)))));
   }
 
   // ------------------------------------------------------------ one event stream (chat SSE and voice WS share it)
@@ -511,7 +534,9 @@
     try {
       const r = await fetch("/api/ev/documents?name=" + encodeURIComponent(f.name), { method: "POST", headers: { ...(token() ? { "X-OpenAtlas-Token": token() } : {}) }, body: f });
       if (!r.ok) throw new Error((await r.json()).detail);
-      toast(`E.V can read ${f.name} now`); const inp = $("#chat-input"); inp.value = `Summarise ${f.name} for me`; autoGrow(); inp.focus();
+      toast(`E.V can read ${f.name} now`); const inp = $("#chat-input");
+      inp.value = /\.(py|js|ts|tsx|jsx|sh|rb|go|rs|java|php|sql)$/i.test(f.name) ? `Review the code in ${f.name}` : `Summarise ${f.name} for me`;
+      autoGrow(); inp.focus();
     } catch (err) { toast(err.message); }
   });
   $("#suggest").replaceChildren(...SUGGEST.map(([k, q]) => h("button", { onclick: () => send(q) }, h("b", {}, k), h("span", {}, q))));

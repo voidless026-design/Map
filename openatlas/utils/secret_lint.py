@@ -175,6 +175,10 @@ def main(argv=None) -> int:
     import sys
 
     args = argv if argv is not None else sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print("usage: python -m openatlas.utils.secret_lint [path]\n"
+              "Scan for hardcoded secrets and paid-API keys (default: the installed package). Exit 1 on findings.")
+        return 0
     target = args[0] if args else str(default_target())
     try:
         findings = scan_path(target, package=not args)

@@ -35,7 +35,7 @@ refuses to call anything finished until the checks are green.
 - "Create a skill that investigates a username end-to-end." -> `new-skill`
 - "Turn my 'curate the brain' routine into a reusable skill." -> `new-skill`
 - "Make a skill that checks Atlas's answers are on-topic." -> `new-skill` (this is how `search-quality` was made)
-- "Give E.V a skill for reading my contracts / planning / decisions." -> `new-skill` (how E.V's eight skills and `ev-voice` were made)
+- "Give E.V a skill for reading my contracts / planning / decisions." -> `new-skill` (how E.V's skills and `ev-voice` were made)
 - "Do all our skills and their tools still work?" -> `verify-skill --all` + `doctor`
 
 Do **not** trigger it to *run* an existing function (use `openatlas run <slug> <value>`),
@@ -79,7 +79,7 @@ python -m openatlas.utils.forge new-skill --name username-deep-dive \
   --tool "openatlas/investigate/verify.py - automatic re-checks"
 ```
 
-`osint-investigate`, `kb-curate`, `search-quality`, `kb-library`, E.V's eight skills (`document-intelligence`, `project-setup`, `research-synthesis`, `workflow-automation`, `context-continuity`, `interactive-planning`, `quality-assurance`, `decision-support`) and `ev-voice` were generated exactly this way. If the
+`osint-investigate`, `kb-curate`, `search-quality`, `kb-library`, E.V's skills (`document-intelligence`, `project-setup`, `research-synthesis`, `workflow-automation`, `context-continuity`, `interactive-planning`, `quality-assurance`, `decision-support`, and the Engineering skills adapted from everything-claude-code: `code-audit`, `verification-loop`, `continuous-learning`, `strategic-checkpoint`, `feature-planning`, `answer-evals`) and `ev-voice` were generated exactly this way. If the
 lint fails, fix the draft and run `python -m openatlas.utils.forge verify-skill <name>`;
 it is promoted as soon as it passes.
 
@@ -156,6 +156,8 @@ success on a failing check.
 | Approval gate + risk simulation | `openatlas/ev/tools.py` | Network, write and command tools wait for your OK, with a worst-case read-out. Unethical requests are refused. |
 | Document reader | `openatlas/ev/skills/documents.py` | Page-cited passages from your own files, limited to folders you allow. |
 | Voice pipeline | `openatlas/ev/voice.py`, `openatlas/ev/tts_worker.py` | Local hearing and the Australian voice, with the latency measured every turn. |
+| Code review + verification gates | `openatlas/ev/skills/engineering.py` (`review_code`, `verify_project`) | Graded findings with file:line for secrets, injection and risky calls, and pass/fail gates from a project's own tests, so "is this AI-written code safe and done?" isn't a manual read-through. |
+| Answer evals | `openatlas/ev/skills/engineering.py` (`eval_answers`) | Asks the local model the same question k times and grades each answer with the claim checker (pass@k / pass^k), so you measure reliability instead of spot-checking. |
 | Knowledge-graph visualizer | `openatlas/utils/knowledge_graph.py` (ATSMATRIX) | Shows a case's evidence or the brain's growth as a graph, so cross-links and gaps are visible instead of re-checked by hand. |
 | Tool doctor | `openatlas/skills/doctor.py` | Verifies all of the above on fixtures - the verifiers are verified. |
 

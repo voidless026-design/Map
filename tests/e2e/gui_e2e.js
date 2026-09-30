@@ -22,6 +22,26 @@ const ok = (c, m) => { if (!c) { console.log("FAIL", m); process.exitCode = 1; }
   ok((await p.textContent("#messages")).includes("Research Synthesis"), "brain search used for a question");
   ok((await p.textContent("#messages")).includes("World War II"), "answer comes from the brain");
   await p.screenshot({ path: out + "/0b-chat.png" });
+
+  // Engineering skill (adapted from everything-claude-code): upload a script and E.V reviews it; lessons wait for approval
+  const probe = 'API_KEY = "sk-' + "e2e0e2e0".repeat(4) + '"\ndef run(cmd):\n    eval(cmd)\n';
+  await p.setInputFiles("#file", { name: "e2e_probe.py", mimeType: "text/x-python", buffer: Buffer.from(probe) });
+  await p.waitForFunction(() => document.querySelector("#chat-input").value === "Review the code in e2e_probe.py");
+  ok(true, "uploading a script prefills a review request");
+  await p.focus("#chat-input"); await p.keyboard.press("Enter");
+  await p.waitForFunction(() => [...document.querySelectorAll(".tcard .tag")].some((t) => t.textContent === "review"), null, { timeout: 15000 });
+  await p.locator(".tcard", { has: p.locator(".tag", { hasText: /^review$/ }) }).last().screenshot({ path: out + "/0c-review-card.png" });
+  const review = await p.evaluate(() => [...document.querySelectorAll(".tcard")].find((c) => c.querySelector(".tag")?.textContent === "review").textContent);
+  ok(review.includes("hardcoded secret") && review.includes("eval/exec") && review.includes("block"), "code review card flags the planted secret and eval, verdict block");
+  const pending = (await p.$$(".tcard.approval")).length;
+  await p.fill("#chat-input", "learn from this: a closed terminal is fixed with openatlas kb library resume"); await p.keyboard.press("Enter");
+  await p.waitForFunction((n) => document.querySelectorAll(".tcard.approval").length > n, pending, { timeout: 15000 });
+  const learn = p.locator(".tcard.approval").last();
+  const learnText = await learn.textContent();
+  ok(learnText.includes("Engineering") && learnText.includes("learn pattern") && learnText.includes("Approve"), "learning a lesson asks for approval first");
+  await learn.scrollIntoViewIfNeeded(); await p.screenshot({ path: out + "/0c-engineering.png" });
+  await learn.locator("button", { hasText: "Deny" }).click(); await learn.locator("text=denied").waitFor();
+  ok(true, "denying leaves the lesson unsaved");
   await p.click("[data-view='settings']"); await p.waitForSelector(".dial");
   ok((await p.$$(".dial")).length === 9, "nine personality dials in Settings");
   await p.click("[data-view='investigate']"); await p.waitForSelector("#filters button");
