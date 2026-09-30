@@ -355,13 +355,18 @@ def check_library() -> Tuple[str, str]:
         return {"uuid": fn, "filename": fn, "book": b, "version": v, "url": base + fn,
                 "meta4": base + fn + ".meta4", "size": len(data)}
 
-    saved = library.TRANSPORT
+    saved, saved_margin = library.TRANSPORT, library.MARGIN_GB
     library.TRANSPORT = httpx.MockTransport(handler)
+    library.MARGIN_GB = 0.0  # a 1 MiB fixture must not need GBs free in /tmp (a small tmpfs on Fedora)
+    why: List[str] = []
     try:
         with tempfile.TemporaryDirectory() as d, store.use_path(Path(d) / "brain.sqlite"):
             rid = library.enqueue(entry("wikipedia_en_x_2026-01.zim"))
             Path(library.get(rid)["path"] + ".part").write_bytes(data[:300_000])  # interrupted
             resumed = library.download(rid) == "ready" and library.verify(rid)["ok"] is True
+            if not resumed:
+                row = library.get(rid) or {}
+                why.append(f"download: {row.get('status')} - {row.get('note') or 'no note'}")
             dup_refused = False
             try:
                 library.check_duplicate(entry("wikipedia_en_x_2026-01.zim"))
@@ -376,20 +381,24 @@ def check_library() -> Tuple[str, str]:
                 ambiguous_listed = False
             except library.NotFound as exc:
                 ambiguous_listed = len(exc.choices) == 2
+            library.MARGIN_GB = 1e6  # known-bad: no disk can hold this, so the guard must refuse it
+            low = library.enqueue(entry("wikipedia_en_disk_2026-01.zim"))
+            disk_guarded = library.download(low) == "failed" and "disk space" in (library.get(low) or {}).get("note", "")
     finally:
-        library.TRANSPORT = saved
+        library.TRANSPORT, library.MARGIN_GB = saved, saved_margin
     checks = {"resume gives the verified file": resumed, "duplicate refused": dup_refused,
               "newer version = update": update_ok, "corrupt download rejected": corrupt_rejected,
-              "book found by name past page 1": by_name, "ambiguous name lists choices": ambiguous_listed}
+              "book found by name past page 1": by_name, "ambiguous name lists choices": ambiguous_listed,
+              "low disk space refused": disk_guarded}
     failed = [k for k, v in checks.items() if not v]
     if failed:
-        return _fail("; ".join(failed) + " - FAILED")
+        return _fail("; ".join(failed) + " - FAILED" + (f" ({'; '.join(why)})" if why else ""))
     extras = []
     if not library.libzim_available():
         extras.append("feeding the brain needs: pip install libzim")
     if not kiwix.binary():
         extras.append("reading inside Atlas needs: sudo dnf install kiwix-tools")
-    detail = "resume + checksum + duplicate rules + lookup by name verified"
+    detail = "resume + checksum + disk-space guard + duplicate rules + lookup by name verified"
     return ("warn", f"{detail}; {'; '.join(extras)}") if extras else _pass(detail)
 
 

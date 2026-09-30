@@ -272,3 +272,21 @@ def test_voice_check_fails_when_the_server_cannot_open_websockets(monkeypatch):
     monkeypatch.setattr(voice, "ws_supported", lambda: False)
     status, detail = doctor.check_ev_voice()
     assert status == "fail" and "WebSocket" in detail and "pip install -e ." in detail
+
+
+def test_kiwix_check_does_not_depend_on_free_space_in_tmp(monkeypatch):
+    """Fedora's /tmp is a small tmpfs; a nearly full one made the doctor's 1 MiB fixture fail its
+    disk-space guard and report resume / duplicate / update as broken (seen on the user's PC)."""
+    from openatlas.kb import library
+
+    monkeypatch.setattr(library, "free_gb", lambda path=None: 1.0)
+    status, detail = doctor.check_library()
+    assert status != "fail", detail
+
+
+def test_kiwix_check_says_why_a_download_failed(monkeypatch):
+    from openatlas.kb import library
+
+    monkeypatch.setattr(library, "expected_checksum", lambda book: ("0" * 64, [book["url"]]))  # every file "corrupt"
+    status, detail = doctor.check_library()
+    assert status == "fail" and "checksum mismatch" in detail
