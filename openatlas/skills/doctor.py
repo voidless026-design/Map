@@ -633,7 +633,8 @@ def check_ev_engineering() -> Tuple[str, str]:
 
     fake_key = "sk-" + "doctor42" * 4  # built at runtime so the repo's own secret scan stays clean
     bad = (f'API_KEY = "{fake_key}"\n\ndef find(con, name):\n'
-           '    eval(name)\n    return con.execute(f"SELECT * FROM t WHERE n = \'{name}\'")\n')
+           '    eval(name)\n    subprocess.run(name, shell=True)\n'
+           '    return con.execute(f"SELECT * FROM t WHERE n = \'{name}\'")\n')
     with _ev_sandbox() as d:
         root = d / "docs"
         (root / "good" / "tests").mkdir(parents=True)
@@ -661,7 +662,8 @@ def check_ev_engineering() -> Tuple[str, str]:
                 os.environ["OPENATLAS_EV_DOC_ROOTS"] = old_env
     maths = engineering.pass_at_k([False, True, False]) == {"k": 3, "passed": 1, "pass_at_k": True, "pass_all_k": False}
     checks = {
-        "review flags secret + SQL + eval": {"hardcoded secret", "SQL built from strings", "eval/exec"} <= flagged,
+        "review flags secret + SQL + eval + shell=True": {"hardcoded secret", "SQL built from strings", "eval/exec",
+                                                           "shell=True"} <= flagged,
         "clean code passes": clean.get("verdict") == "ok",
         "verify reports a pass": passed.get("passed") is True,
         "verify reports a fail with its output": failed.get("passed") is False
@@ -671,7 +673,7 @@ def check_ev_engineering() -> Tuple[str, str]:
     }
     bad_checks = [k for k, v in checks.items() if not v]
     return _fail("; ".join(bad_checks) + " - FAILED") if bad_checks else \
-        _pass("review flags a planted secret, SQL and eval and passes clean code; verify gates pass/fail; "
+        _pass("review flags a planted secret, SQL, eval and shell=True and passes clean code; verify gates pass/fail; "
               "learning waits for approval; pass@k correct")
 
 
