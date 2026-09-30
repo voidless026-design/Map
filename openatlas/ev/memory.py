@@ -66,9 +66,12 @@ def messages(conv_id: int, limit: int = 200) -> List[Dict[str, Any]]:
 
 
 def recent_for_model(conv_id: int) -> List[Dict[str, str]]:
-    """The last few user/assistant turns, as chat messages for the model."""
+    """The last few user/assistant turns, as chat messages for the model - only those after the
+    latest checkpoint, when there is one (what came before lives in the summary)."""
+    r = db.one("SELECT value FROM kv WHERE key=?", (f"checkpoint:{conv_id}",))
+    after = int(r["value"]) if r else 0
     return [{"role": m["role"], "content": m["content"]} for m in messages(conv_id, KEEP_TURNS * 2)
-            if m["role"] in ("user", "assistant") and m["content"]][-KEEP_TURNS:]
+            if m["role"] in ("user", "assistant") and m["content"] and m["id"] > after][-KEEP_TURNS:]
 
 
 def set_summary(conv_id: int, summary: str) -> None:

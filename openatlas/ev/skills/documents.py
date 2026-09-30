@@ -162,9 +162,11 @@ def read_document(path: str, question: str = "") -> Dict[str, Any]:
 
 
 def save_upload(name: str, data: bytes) -> Path:
+    from openatlas.ev.skills.engineering import CODE_EXT  # code files are for review_code
+
     safe = re.sub(r"[^A-Za-z0-9._ -]", "_", Path(name).name)[:120] or "document"
-    if Path(safe).suffix.lower() not in SUPPORTED:
-        raise ValueError(f"unsupported file type - E.V reads {', '.join(SUPPORTED)}")
+    if Path(safe).suffix.lower() not in SUPPORTED + CODE_EXT:
+        raise ValueError(f"unsupported file type - E.V reads {', '.join(SUPPORTED)} and reviews code files")
     if len(data) > MAX_BYTES:
         raise ValueError("file too large")
     dest = uploads_dir() / safe

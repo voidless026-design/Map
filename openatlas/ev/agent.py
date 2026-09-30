@@ -26,7 +26,9 @@ TOOLS_NOTE = ("Use your tools when they help: search_brain / read_article / web_
               "(then cite results as [n]), read_document / list_documents for the person's files, "
               "make_plan for multi-step goals, decision_matrix for choices, plan_project / "
               "create_project for new projects, create_routine / list_routines / run_routine for "
-              "automation, remember / recall / forget for memory, check_claims to double-check. "
+              "automation, remember / recall / forget for memory, check_claims to double-check, "
+              "review_code / verify_project / plan_feature for code, learn_pattern / list_learned to "
+              "keep lessons, checkpoint for long chats, eval_answers to measure how reliable an answer is. "
               "Don't invent tool results. Tools marked as needing approval become a card the person "
               "approves - tell them what you've queued and why.")
 
@@ -61,6 +63,12 @@ _DECIDE = re.compile(r"\b(should i|which (is|one)|decide|decision|compare|pros a
 _ROUTINE = re.compile(r"\b(routines?|automat\w*|every (day|morning|night|week)|schedule)\b", re.I)
 _PROJECT = re.compile(r"\b(new project|set ?up (a|my) project|scaffold|start a project)\b", re.I)
 _CHECK = re.compile(r"\b(fact[- ]?check|verify|is (it|this) true|double[- ]check)\b", re.I)
+_REVIEW = re.compile(r"\b(review|audit|security[- ]check)\b.*\b(code|file|script|repo|project|folder|\.\w{1,4})\b|\bcode review\b", re.I)
+_VERIFY = re.compile(r"\b(run (the |my )?tests|verify (the |my )?(project|code|build|repo)|does it (build|pass))\b", re.I)
+_LEARN = re.compile(r"\b(learn (from )?(this|that)|save (this|that) (lesson|pattern|fix)|remember how we)\b", re.I)
+_LEARNED = re.compile(r"\b(what have (you|we) learned|learned patterns|lessons learned)\b", re.I)
+_CHECKPOINT = re.compile(r"\b(checkpoint|compact (this|the) (chat|conversation)|summari[sz]e (this|the) chat)\b", re.I)
+_FEATURE = re.compile(r"\b(plan|build|add|implement)\b.*\b(feature|function|endpoint|fix|bug|refactor)\b", re.I)
 _QUESTION = re.compile(r"\?|^(what|who|when|where|why|how|tell me|explain|define|describe)\b", re.I)
 _SMALLTALK = re.compile(r"^\s*(hi|hey|hello|g'?day|yo|good (morning|afternoon|evening|night)|how are you|"
                         r"how'?s it going|thanks?|thank you|cheers|bye|see ya)\b", re.I)
@@ -75,6 +83,20 @@ def route(text: str) -> List[Tuple[str, Dict[str, Any]]]:
             calls.append(("read_document", {"path": path, "question": text}))
         else:
             calls.append(("list_documents", {}))
+    code_path = re.search(r"(~?/[^\s'\"]+|[\w.\-]+\.(?:py|js|ts|sh|go|rs|rb|java|php|sql)\b)", text)
+    if _REVIEW.search(text) and code_path:
+        calls.append(("review_code", {"path": code_path.group(1).strip()}))
+        return calls
+    if _VERIFY.search(text) and code_path:
+        return [("verify_project", {"path": code_path.group(1).strip()})]
+    if _CHECKPOINT.search(text):
+        return [("checkpoint", {})]
+    if _LEARNED.search(text):
+        return [("list_learned", {})]
+    if _LEARN.search(text):
+        lesson = re.sub(r"^\W*(please\s+)?(learn (from )?(this|that)|save (this|that) (lesson|pattern|fix))\b\W*", "",
+                        text, flags=re.I).strip() or text
+        return [("learn_pattern", {"title": lesson[:80], "solution": lesson})]
     if _PROJECT.search(text):
         name = re.sub(r".*(project|scaffold)\s*(called|named|for)?\s*", "", text, flags=re.I).strip(" .?!") or "new project"
         calls.append(("plan_project", {"name": name[:60], "goal": text}))
@@ -87,6 +109,8 @@ def route(text: str) -> List[Tuple[str, Dict[str, Any]]]:
                                               "criteria": [{"name": "benefit", "weight": 2},
                                                            {"name": "cost", "weight": 1},
                                                            {"name": "risk", "weight": 1}]}))
+    elif _FEATURE.search(text) and _PLAN.search(text):
+        calls.append(("plan_feature", {"goal": text}))
     elif _PLAN.search(text):
         calls.append(("make_plan", {"goal": text}))
     if _CHECK.search(text):
@@ -123,6 +147,21 @@ def _offline_reply(text: str, results: List[Tuple[str, Dict[str, Any]]], why: st
             docs = r.get("documents") or []
             parts.append("Documents I can read:\n" + "\n".join(f"- {d['name']}" for d in docs[:10])
                          if docs else f"I can't see any documents yet. Drop one into the chat or put it in {r.get('folders')}.")
+        elif r.get("card") == "review":
+            c = r["counts"]
+            parts.append(f"I reviewed {r['files']} file(s): {c['critical']} critical, {c['high']} high, {c['medium']} medium, "
+                         f"{c['low']} low - verdict: **{r['verdict']}**. Details are in the card.")
+        elif r.get("card") == "verify":
+            parts.append(f"Verification: {r['summary']}.")
+        elif r.get("card") == "eval":
+            parts.append(f"{r['passed']}/{r['k']} runs were right (pass@k {'yes' if r['pass_at_k'] else 'no'}, "
+                         f"all-k {'yes' if r['pass_all_k'] else 'no'}).")
+        elif "checkpointed" in r:
+            parts.append(f"Checkpointed {r['checkpointed']} messages - I'll carry this forward:\n{r['summary']}")
+        elif "learned" in r:
+            items = r["learned"]
+            parts.append("Here's what we've learned together:\n" + "\n".join(f"- {x['title']}" for x in items)
+                         if items else "We haven't saved any lessons yet - say \"learn from this\" after we crack something.")
         elif r.get("card") == "plan":
             parts.append(f"Here's a plan for that - tick things off as you go ({len(r['plan']['steps'])} steps).")
         elif r.get("card") == "decision":
@@ -174,6 +213,11 @@ def respond(conv_id: Optional[int], text: str, *, stop: Optional[threading.Event
         mid = memory.add(conv_id, "assistant", answer, meta)
         if len([m for m in memory.messages(conv_id, 400) if m["role"] == "user"]) % 8 == 0:
             memory.refresh_summary(conv_id)
+        from openatlas.ev.skills import engineering
+
+        if engineering.suggest_checkpoint(conv_id):  # offered, never automatic
+            yield {"type": "notice", "level": "info",
+                   "text": "This chat is getting long - say \"checkpoint this chat\" and I'll fold it into a short summary so I stay quick and focused."}
         yield {"type": "done", "conv_id": conv_id, "message_id": mid, "text": answer, "meta": meta}
 
     # 1. moral decision-making: refuse clearly, offer a better route

@@ -1,4 +1,4 @@
-"""E.V's tools (her eight skills), the approval gate, and the pre-action risk simulation.
+"""E.V's tools (her nine skills), the approval gate, and the pre-action risk simulation.
 
 Every tool has a *kind*:
 
@@ -61,6 +61,7 @@ def load_skills() -> Dict[str, Tool]:
         continuity,
         decisions,
         documents,
+        engineering,
         planning,
         project,
         qa,

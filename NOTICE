@@ -38,6 +38,18 @@ ATSMATRIX Agent VisualizeR  (github.com/anyel1to/atsmatrix-agent-visualizeR--ANY
   simulated statistics; demo "verified" badges are hidden over real data; data-node layout,
   labels and theme-aware text were added.
 
+everything-claude-code  (github.com/affaan-m/everything-claude-code; fork used:
+  github.com/WorldFlowAI/everything-claude-code at commit 432485b)  - MIT
+  Copyright (c) 2026 Affaan Mustafa.
+  .claude/agents/*, .claude/commands/oa-* and the SKILL.md files code-audit,
+  verification-loop, continuous-learning, strategic-checkpoint, feature-planning and
+  answer-evals are ADAPTED from its agents, commands and skills (rewritten for Python,
+  pytest, ruff and the OpenAtlas rules). E.V's Engineering skill
+  (openatlas/ev/skills/engineering.py) implements its ideas - code review, verification
+  gates, continuous learning, checkpoints, test-first planning, pass@k evals - as local
+  tools; no upstream code is copied. Full notice, what was adapted and what was left out:
+  .claude/ECC-NOTICE.md.
+
 WhatsMyName  (github.com/WebBreacher/WhatsMyName)
   data/wmn-data.json is the WhatsMyName dataset by Micah Hoffman et al., used for
   username enumeration. See the "license" field inside that file for its terms.

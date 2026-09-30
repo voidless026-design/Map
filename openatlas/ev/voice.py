@@ -150,6 +150,12 @@ def _has(mod: str) -> bool:
         return False
 
 
+def ws_supported() -> bool:
+    """The web server (uvicorn) speaks WebSocket only with one of these installed; without it the
+    hands-free voice button can't connect at all."""
+    return _has("websockets") or _has("wsproto")
+
+
 def status() -> Dict[str, Any]:
     stt, tts = _has("faster_whisper"), sidecar_python() is not None
     return {"stt": {"available": stt, "engine": "faster-whisper",

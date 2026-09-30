@@ -487,7 +487,7 @@ def check_ev_gate() -> Tuple[str, str]:
         read_ok = tools.run("recall", {"query": "anything"}).get("ok") is True
         n_tools, n_skills = len(tools.load_skills()), len(tools.skills())
     checks = {"write needs approval": gated, "risk appraised": risky, "deny leaves it undone": denied,
-              "unethical request refused": refused, "read tools run": read_ok, "8 skills": n_skills == 8}
+              "unethical request refused": refused, "read tools run": read_ok, "9 skills": n_skills == 9}
     bad = [k for k, v in checks.items() if not v]
     return _fail("; ".join(bad) + " - FAILED") if bad else \
         _pass(f"{n_tools} tools in {n_skills} skills; writes/commands/network wait for approval; refusals work")
@@ -554,6 +554,9 @@ def check_ev_voice() -> Tuple[str, str]:
 
     from openatlas.ev import voice
 
+    if not voice.ws_supported():
+        return _fail("E.V can't hear you: the web server has no WebSocket support, so the voice button can't "
+                     f"connect. Run: cd '{Config.files.project_root}' && pip install -e .   then restart openatlas serve")
     ep = voice.Endpointer()
     ep.vad = None
     step = voice.IN_RATE * voice.FRAME_MS // 1000 * 2
@@ -621,6 +624,62 @@ def check_ev_persona() -> Tuple[str, str]:
         _fail("persona prompt or self-regulation broken")
 
 
+def check_ev_engineering() -> Tuple[str, str]:
+    """E.V's Engineering skill (adapted from everything-claude-code) on fixtures: the code review
+    flags a planted secret, SQL built from strings and eval, and passes clean code; the verify
+    gates report a pass and a fail (fake runner, nothing executed); learning waits for approval;
+    pass@k maths on known inputs."""
+    import os
+
+    from openatlas.ev import tools
+    from openatlas.ev.skills import engineering
+
+    fake_key = "sk-" + "doctor42" * 4  # built at runtime so the repo's own secret scan stays clean
+    bad = (f'API_KEY = "{fake_key}"\n\ndef find(con, name):\n'
+           '    eval(name)\n    subprocess.run(name, shell=True)\n'
+           '    return con.execute(f"SELECT * FROM t WHERE n = \'{name}\'")\n')
+    with _ev_sandbox() as d:
+        root = d / "docs"
+        (root / "good" / "tests").mkdir(parents=True)
+        (root / "bad").mkdir()
+        (root / "bad" / "app.py").write_text(bad)
+        (root / "good" / "pyproject.toml").write_text("[project]\nname = 'probe'\n")
+        (root / "good" / "calc.py").write_text('def add(a, b):\n    """Add."""\n    return a + b\n')
+        (root / "good" / "tests" / "test_calc.py").write_text("def test_add():\n    assert 1 + 1 == 2\n")
+        old_env, old_runner = os.environ.get("OPENATLAS_EV_DOC_ROOTS"), engineering.RUNNER
+        os.environ["OPENATLAS_EV_DOC_ROOTS"] = str(root)
+        try:
+            flagged = {f["what"] for f in tools.run("review_code", {"path": str(root / "bad")}).get("findings", [])}
+            clean = tools.run("review_code", {"path": str(root / "good")})
+            engineering.RUNNER = lambda cmd, cwd, timeout: (0, "3 passed")
+            passed = engineering.verify_project(str(root / "good"))
+            engineering.RUNNER = lambda cmd, cwd, timeout: (1, "E   assert 2 == 3\n1 failed")
+            failed = engineering.verify_project(str(root / "good"))
+            learn = tools.run("learn_pattern", {"title": "doctor probe", "solution": "nothing"})
+            unsaved = engineering.learned() == []
+        finally:
+            engineering.RUNNER = old_runner
+            if old_env is None:
+                os.environ.pop("OPENATLAS_EV_DOC_ROOTS", None)
+            else:
+                os.environ["OPENATLAS_EV_DOC_ROOTS"] = old_env
+    maths = engineering.pass_at_k([False, True, False]) == {"k": 3, "passed": 1, "pass_at_k": True, "pass_all_k": False}
+    checks = {
+        "review flags secret + SQL + eval + shell=True": {"hardcoded secret", "SQL built from strings", "eval/exec",
+                                                           "shell=True"} <= flagged,
+        "clean code passes": clean.get("verdict") == "ok",
+        "verify reports a pass": passed.get("passed") is True,
+        "verify reports a fail with its output": failed.get("passed") is False
+        and "assert 2 == 3" in failed["gates"][0]["tail"],
+        "learning waits for approval": bool(learn.get("pending")) and unsaved,
+        "pass@k maths": maths,
+    }
+    bad_checks = [k for k, v in checks.items() if not v]
+    return _fail("; ".join(bad_checks) + " - FAILED") if bad_checks else \
+        _pass("review flags a planted secret, SQL, eval and shell=True and passes clean code; verify gates pass/fail; "
+              "learning waits for approval; pass@k correct")
+
+
 CHECKS: List[Check] = [
     ("Installation", check_installation),
     ("Schema validator", check_schema_validator),
@@ -641,6 +700,7 @@ CHECKS: List[Check] = [
     ("E.V document reader", check_ev_documents),
     ("E.V voice pipeline", check_ev_voice),
     ("E.V persona", check_ev_persona),
+    ("E.V engineering skills", check_ev_engineering),
     ("Brain graph builder", check_brain_graph),
 ]
 
