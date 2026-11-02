@@ -608,9 +608,11 @@ def zim_info(path: Path) -> Dict[str, Any]:
 
 
 def _iter_entries(archive: Any, start: int) -> Iterator[Tuple[int, Any]]:
+    # libzim 4 made the by-id lookup public; 3.x only has the private name.
+    get = getattr(archive, "get_entry_by_id", None) or archive._get_entry_by_id
     for i in range(start, archive.entry_count):
         try:
-            yield i, archive._get_entry_by_id(i)
+            yield i, get(i)
         except (RuntimeError, KeyError, IndexError):
             continue
 
